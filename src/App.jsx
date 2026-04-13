@@ -493,12 +493,24 @@ function parsePdfText(text, masterData) {
   if (masterNames.length > 0) {
     masterNames.forEach(master => {
       // 氏名が含まれる全行を収集
+      // 完全一致優先、なければ名字（最初の2文字以上）で部分一致
       const nameLineIdxs = [];
+      const lastNameNorm = master.norm.slice(0, 2); // 名字の先頭2文字
       rawLines.forEach((line, idx) => {
-        if (normalizeSpaces(line).includes(master.norm)) {
+        const normLine = normalizeSpaces(line);
+        if (normLine.includes(master.norm)) {
           nameLineIdxs.push(idx);
         }
       });
+      // 完全一致がなく、名字2文字以上ある場合は部分一致も試みる
+      if (nameLineIdxs.length === 0 && lastNameNorm.length >= 2) {
+        rawLines.forEach((line, idx) => {
+          const normLine = normalizeSpaces(line);
+          if (normLine.includes(lastNameNorm)) {
+            nameLineIdxs.push(idx);
+          }
+        });
+      }
       if (nameLineIdxs.length === 0) return;
 
       let totalAmount = 0;
@@ -579,16 +591,46 @@ function parsePdfText(text, masterData) {
     });
   }
 
-  // 最終フォールバック: 御請求額キーワード
+  // 最終フォールバック: 御請求額キーワードで金額を取得
   if (results.length === 0) {
-    let maxAmount = 0;
-    rawLines.forEach(line => {
-      if (/御請求|ご請求|請求金額|総合計|合計金額/.test(line)) {
-        const nums = extractNums(line);
-        if (nums.length > 0) maxAmount = Math.max(maxAmount, ...nums);
+    // 「今回ご請求額」「御請求額」などのキーワードの直後行から金額を探す
+    const requestKeyword = /今回.*請求額|今回.*ご請求|御請求額|ご請求額|請求金額|合計金額|支払額/;
+    let foundAmount = 0;
+
+    for (let i = 0; i < rawLines.length; i++) {
+      if (requestKeyword.test(rawLines[i])) {
+        // 同じ行または直後3行以内に金額を探す
+        for (let j = i; j <= Math.min(i + 3, rawLines.length - 1); j++) {
+          const line = rawLines[j];
+          // ￥マーク付きの金額を優先
+          const yenMatch = line.match(/[￥\$¥]\s*([\d,，]+)/);
+          if (yenMatch) {
+            const amt = parseInt(yenMatch[1].replace(/[,，]/g, ""), 10);
+            if (amt > foundAmount) foundAmount = amt;
+            break;
+          }
+          // 6桁以上の金額
+          const nums = extractNums(line).filter(n => n >= 100000);
+          if (nums.length > 0) {
+            const amt = Math.max(...nums);
+            if (amt > foundAmount) foundAmount = amt;
+            break;
+          }
+        }
       }
-    });
-    if (maxAmount > 0) results.push({ name: "", amount: maxAmount, matched: false, master: null });
+    }
+
+    // キーワードで見つからない場合は最大金額をフォールバック
+    if (foundAmount === 0) {
+      rawLines.forEach(line => {
+        if (/御請求|ご請求|請求金額|総合計|合計金額/.test(line)) {
+          const nums = extractNums(line);
+          if (nums.length > 0) foundAmount = Math.max(foundAmount, ...nums);
+        }
+      });
+    }
+
+    if (foundAmount > 0) results.push({ name: "", amount: foundAmount, matched: false, master: null });
   }
 
   return results;
