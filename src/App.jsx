@@ -472,7 +472,7 @@ function parsePdfText(text, masterData) {
   };
 
   // 金額明細キーワード
-  const amountLineKeyword = /時間内|時間外残業|時間外|深夜|早朝|休日|通勤|交通費|交通|基本|普通残|残業|深夜残|手当/;
+  const amountLineKeyword = /時間内|時間外残業|時間外|深夜|早朝|休日|通勤|交通費|交通|基本|普通残|普通|割増|残業|深夜残|手当/;
 
   // 除外キーワード（合算しない行）
   const excludeKeyword = /消費税|内税|外税|税込|税抜|立替|相殺|業務料合計|取引銀行|振込/;
@@ -509,12 +509,16 @@ function parsePdfText(text, masterData) {
         let endIdx = Math.min(rawLines.length, startIdx + 20);
         for (let i = startIdx + 1; i < endIdx; i++) {
           const l = rawLines[i];
+          const normL = normalizeSpaces(l);
           // 別のマスタ氏名が出たら終了
-          if (masterNames.some(m => m.norm !== master.norm && normalizeSpaces(l).includes(m.norm))) {
+          if (masterNames.some(m => m.norm !== master.norm && normL.includes(m.norm))) {
             endIdx = i; break;
           }
           // 合計・小計行で終了
           if (isBlockEnd(l)) { endIdx = i; break; }
+          // スタッフ番号（5〜10桁の数字）で始まる行は次の人の行 → 終了
+          // エキスパートスタッフ型: 「20011795 安田 加代 ...」
+          if (/^\d{5,10}\s+[\u4e00-\u9fa5]/.test(l)) { endIdx = i; break; }
         }
 
         // 氏名行 + 後続行をすべてスキャン
@@ -594,21 +598,25 @@ function parsePdfText(text, masterData) {
 
     for (let i = 0; i < rawLines.length; i++) {
       if (requestKeyword.test(rawLines[i])) {
-        // 同じ行または直後3行以内に金額を探す
-        for (let j = i; j <= Math.min(i + 3, rawLines.length - 1); j++) {
+        // 同じ行または直後5行以内に金額を探す（「￥」と金額が別行のケースに対応）
+        for (let j = i; j <= Math.min(i + 5, rawLines.length - 1); j++) {
           const line = rawLines[j];
-          // ￥マーク付きの金額を優先
-          const yenMatch = line.match(/[￥\$¥]\s*([\d,，]+)/);
+          // ￥マーク付きの金額を優先（同行 or 次行）
+          const yenMatch = line.match(/[￥$¥]\s*([\d,，]+)/);
           if (yenMatch) {
             const amt = parseInt(yenMatch[1].replace(/[,，]/g, ""), 10);
             if (amt > foundAmount) foundAmount = amt;
             break;
           }
-          // 6桁以上の金額
+          // 前の行が「￥」だけだった場合、この行の数値が金額
+          if (j > i && /^[￥$¥]\s*$/.test(rawLines[j-1])) {
+            const nums = extractNums(line).filter(n => n >= 10000);
+            if (nums.length > 0) { foundAmount = Math.max(foundAmount, ...nums); break; }
+          }
+          // 6桁以上の単独金額行
           const nums = extractNums(line).filter(n => n >= 100000);
-          if (nums.length > 0) {
-            const amt = Math.max(...nums);
-            if (amt > foundAmount) foundAmount = amt;
+          if (nums.length === 1) {
+            if (nums[0] > foundAmount) foundAmount = nums[0];
             break;
           }
         }
