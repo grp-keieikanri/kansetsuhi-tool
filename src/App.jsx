@@ -475,7 +475,7 @@ function parsePdfText(text, masterData) {
   const amountLineKeyword = /時間内|時間外残業|時間外|深夜|早朝|休日|通勤|交通費|交通|基本|普通残|普通|割増|残業|深夜残|手当/;
 
   // 除外キーワード（合算しない行）
-  const excludeKeyword = /消費税|内税|外税|税込|税抜|立替|相殺|業務料合計|取引銀行|振込/;
+  const excludeKeyword = /消費税|内税|外税|税込|税抜|立替|相殺|業務料合計|取引銀行|振込|通勤手当/;
 
   // 部署名行の判定（「課」「部」「室」「センター」で終わる短い行）
   const isDeptLine = (line) => {
