@@ -477,6 +477,12 @@ function parsePdfText(text, masterData) {
   // 除外キーワード（合算しない行）
   const excludeKeyword = /消費税|内税|外税|税込|税抜|立替|相殺|業務料合計|取引銀行|振込/;
 
+  // 部署名行の判定（「課」「部」「室」「センター」で終わる短い行）
+  const isDeptLine = (line) => {
+    const t = line.trim();
+    return t.length <= 15 && /[課部室係班センター棟]$/.test(t) && !/\d/.test(t);
+  };
+
   // 請求明細行の判定（年月日パターンを含む行を請求明細とみなす）
   // 例: 「伊藤 芳恵 26/03/01～26/03/31 普通 ...」
   const isBillingDetailLine = (line) => /\d{2}\/\d{2}\/\d{2}/.test(line);
@@ -507,6 +513,7 @@ function parsePdfText(text, masterData) {
         const normLine = normalizeSpaces(line);
         if (normLine.includes(master.norm)) {
           if (isAttendanceLine(line)) return; // 勤怠一覧行はスキップ
+          if (isDeptLine(line)) return; // 部署名行はスキップ
           if (isBillingDetailLine(line) || amountLineKeyword.test(line)) {
             nameLineIdxs.unshift(idx); // 請求明細行を先頭に追加（優先）
           } else {
@@ -553,14 +560,17 @@ function parsePdfText(text, masterData) {
           if (excludeKeyword.test(line)) return;
           if (isBlockEnd(line)) return;
           if (isAttendanceLine(line)) return; // 勤怠一覧行は除外
+          if (isDeptLine(line)) return; // 部署名行は除外
 
           const nums = extractNums(line);
           if (nums.length === 0) return;
 
           if (amountLineKeyword.test(line)) {
             // 明細キーワード行：最後の整数値が金額
-            // 小数（168.00など）と契約番号（14桁超）は除外
-            const intNums = (line.match(/(?<![\d.])[\d,]{3,}(?![\d.])/g) || [])
+            // 小数点を含む数値・契約番号（10桁超）を除外
+            // まず小数を含む部分を削除してから数値を抽出
+            const lineNoDecimal = line.replace(/\d+\.\d+/g, ""); // 168.00, 4.00など削除
+            const intNums = (lineNoDecimal.match(/[\d,]{3,}/g) || [])
               .map(n => parseInt(n.replace(/,/g, ""), 10))
               .filter(n => n >= 100 && n <= 9999999); // 1000万以上は契約番号等として除外
             if (intNums.length > 0) blockAmount += intNums[intNums.length - 1];
@@ -620,28 +630,37 @@ function parsePdfText(text, masterData) {
     const requestKeyword = /今回.*請求額|今回.*ご請求|御請求額|ご請求額|請求金額|合計金額|支払額/;
     let foundAmount = 0;
 
+    // まず全文から「￥」マークの直後にある金額を探す（リクルート型対応）
     for (let i = 0; i < rawLines.length; i++) {
-      if (requestKeyword.test(rawLines[i])) {
-        // 同じ行または直後5行以内に金額を探す（「￥」と金額が別行のケースに対応）
-        for (let j = i; j <= Math.min(i + 5, rawLines.length - 1); j++) {
-          const line = rawLines[j];
-          // ￥マーク付きの金額を優先（同行 or 次行）
-          const yenMatch = line.match(/[￥$¥]\s*([\d,，]+)/);
-          if (yenMatch) {
-            const amt = parseInt(yenMatch[1].replace(/[,，]/g, ""), 10);
-            if (amt > foundAmount) foundAmount = amt;
+      const line = rawLines[i];
+      // 「￥」単体行の次の行が金額
+      if (/^[￥¥$]\s*$/.test(line.trim())) {
+        for (let j = i + 1; j <= Math.min(i + 2, rawLines.length - 1); j++) {
+          const nums = extractNums(rawLines[j]).filter(n => n >= 10000);
+          if (nums.length > 0) {
+            foundAmount = Math.max(foundAmount, ...nums);
             break;
           }
-          // 前の行が「￥」だけだった場合、この行の数値が金額
-          if (j > i && /^[￥$¥]\s*$/.test(rawLines[j-1])) {
-            const nums = extractNums(line).filter(n => n >= 10000);
-            if (nums.length > 0) { foundAmount = Math.max(foundAmount, ...nums); break; }
-          }
-          // 6桁以上の単独金額行
-          const nums = extractNums(line).filter(n => n >= 100000);
-          if (nums.length === 1) {
-            if (nums[0] > foundAmount) foundAmount = nums[0];
-            break;
+        }
+      }
+      // 「￥528,512」のように同行に金額がある場合
+      const yenMatch = line.match(/[￥¥$]\s*([\d,，]+)/);
+      if (yenMatch) {
+        const amt = parseInt(yenMatch[1].replace(/[,，]/g, ""), 10);
+        if (amt >= 10000 && amt > foundAmount) foundAmount = amt;
+      }
+    }
+
+    // 次に「今回ご請求額」等キーワード直後の金額を探す
+    if (foundAmount === 0) {
+      for (let i = 0; i < rawLines.length; i++) {
+        if (requestKeyword.test(rawLines[i])) {
+          for (let j = i; j <= Math.min(i + 5, rawLines.length - 1); j++) {
+            const nums = extractNums(rawLines[j]).filter(n => n >= 10000);
+            if (nums.length > 0) {
+              foundAmount = Math.max(foundAmount, ...nums);
+              break;
+            }
           }
         }
       }
