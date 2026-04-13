@@ -477,6 +477,13 @@ function parsePdfText(text, masterData) {
   // 除外キーワード（合算しない行）
   const excludeKeyword = /消費税|内税|外税|税込|税抜|立替|相殺|業務料合計|取引銀行|振込/;
 
+  // 請求明細行の判定（年月日パターンを含む行を請求明細とみなす）
+  // 例: 「伊藤 芳恵 26/03/01～26/03/31 普通 ...」
+  const isBillingDetailLine = (line) => /\d{2}\/\d{2}\/\d{2}/.test(line);
+
+  // 勤怠一覧行の除外判定（曜日・出勤・休日などの勤怠キーワードを含む行）
+  const isAttendanceLine = (line) => /出勤|休日|有休|欠勤|曜日|開始|終了|休憩|実働/.test(line);
+
   // ブロック終端判定（合計・小計行）
   const isBlockEnd = (line) => {
     const t = line.trim();
@@ -493,13 +500,30 @@ function parsePdfText(text, masterData) {
   if (masterNames.length > 0) {
     masterNames.forEach(master => {
       // 氏名が含まれる全行を収集（完全一致のみ・誤マッチ防止）
+      // 請求明細行（年月日パターン含む）を優先し、勤怠一覧行は後回し
       const nameLineIdxs = [];
+      const nameLineIdxsFallback = [];
       rawLines.forEach((line, idx) => {
         const normLine = normalizeSpaces(line);
         if (normLine.includes(master.norm)) {
-          nameLineIdxs.push(idx);
+          if (isAttendanceLine(line)) return; // 勤怠一覧行はスキップ
+          if (isBillingDetailLine(line) || amountLineKeyword.test(line)) {
+            nameLineIdxs.unshift(idx); // 請求明細行を先頭に追加（優先）
+          } else {
+            nameLineIdxs.push(idx);
+          }
         }
       });
+      // 勤怠一覧行しかない場合はフォールバックとして使用
+      if (nameLineIdxs.length === 0) {
+        rawLines.forEach((line, idx) => {
+          const normLine = normalizeSpaces(line);
+          if (normLine.includes(master.norm) && !isAttendanceLine(line)) {
+            nameLineIdxsFallback.push(idx);
+          }
+        });
+        nameLineIdxs.push(...nameLineIdxsFallback);
+      }
       if (nameLineIdxs.length === 0) return;
 
       let totalAmount = 0;
@@ -528,27 +552,27 @@ function parsePdfText(text, masterData) {
         blockLines.forEach(line => {
           if (excludeKeyword.test(line)) return;
           if (isBlockEnd(line)) return;
+          if (isAttendanceLine(line)) return; // 勤怠一覧行は除外
 
           const nums = extractNums(line);
           if (nums.length === 0) return;
 
           if (amountLineKeyword.test(line)) {
             // 明細キーワード行：最後の整数値が金額
-            // 「時間外残業 1:課税 2,562 4.00 時間 10,248」→ 10,248
-            // 小数を含む数値（168.00など）は除外して整数のみ取得
+            // 小数（168.00など）と契約番号（14桁超）は除外
             const intNums = (line.match(/(?<![\d.])[\d,]{3,}(?![\d.])/g) || [])
               .map(n => parseInt(n.replace(/,/g, ""), 10))
-              .filter(n => n >= 100);
+              .filter(n => n >= 100 && n <= 9999999); // 1000万以上は契約番号等として除外
             if (intNums.length > 0) blockAmount += intNums[intNums.length - 1];
           } else if (nums.length === 1 && nums[0] >= 500 && nums[0] < 500000) {
             // 数値1つだけの行（交通費等の補助費用行）
             blockAmount += nums[0];
           } else if (nums.length >= 2) {
             // 氏名行に複数数値がある場合（モトヤ型・エキスパート型）
-            // 小数除外した上で最大値を金額として採用
+            // 小数除外、契約番号除外（9桁超）、100万以下の最大値を採用
             const intNums = (line.match(/(?<![\d.])[\d,]{3,}(?![\d.])/g) || [])
               .map(n => parseInt(n.replace(/,/g, ""), 10))
-              .filter(n => n >= 1000);
+              .filter(n => n >= 1000 && n <= 9999999); // 契約番号除外
             if (intNums.length > 0) blockAmount += Math.max(...intNums);
           }
         });
