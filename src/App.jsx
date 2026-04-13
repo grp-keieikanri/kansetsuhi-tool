@@ -439,117 +439,87 @@ async function extractTextFromPdf(file) {
   });
 }
 
-// PDFテキストから氏名と金額を解析するロジック（改良版v3）
+// PDFテキストから氏名と金額を解析するロジック（改良版v4）
 function parsePdfText(text, masterData) {
   const results = [];
-  const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+  const rawLines = text.split("\n").map(l => l.trim()).filter(Boolean);
 
-  // 行から数値を抽出するヘルパー（3桁以上の数字）
+  // 行から金額らしい数値を抽出（3桁以上）
   const extractNums = (str) => {
     const matches = str.match(/[\d,，]{3,}/g) || [];
     return matches.map(n => parseInt(n.replace(/[,，]/g, ""), 10)).filter(n => n >= 100);
   };
 
-  // 明細行キーワード（時間内・時間外・交通費など）
-  // ※氏名行の直後に続く金額行を対象とする
-  const detailKeyword = /時間内|時間外|深夜|早朝|休日|通勤|交通費|交通|基本|普通残|残業|深夜残|手当|overtime|regular/i;
+  // 金額明細キーワード
+  const amountLineKeyword = /時間内|時間外|深夜|早朝|休日|通勤|交通費|交通|基本|普通残|残業|深夜残|手当/;
 
-  // ブロック区切りキーワード（この行自体は合算しない・ブロック終端とみなす）
-  // 「合計」「小計」単体の行、または行頭・行末に来る場合
-  const subtotalKeyword = (line) => {
+  // 除外キーワード（合算しない行）
+  const excludeKeyword = /消費税|内税|外税|税込|税抜|立替|相殺|業務料合計|取引銀行|振込/;
+
+  // ブロック終端判定（合計・小計行）
+  const isBlockEnd = (line) => {
     const t = line.trim();
-    return /^(小計|合計)$/.test(t) ||        // 「合計」「小計」だけの行
-           /^合計[\s:：]|^小計[\s:：]/.test(t) || // 「合計:」「小計 」で始まる行
-           /[\s:：](合計|小計)$/.test(t);         // 「 合計」「：小計」で終わる行
+    return /^合[\s　]*計/.test(t) || /^小[\s　]*計/.test(t) ||
+           /合[\s　]*計$/.test(t) || /小[\s　]*計$/.test(t);
   };
 
-  // 請求合計キーワード（最終的な請求額）
-  const totalKeyword = /御請求|ご請求|請求金額|税込合計|総合計|合計金額|請求額/;
-
-  // マスタ氏名を正規化して準備
+  // マスタ氏名を正規化
   const masterNames = masterData.map(m => ({
     ...m,
     norm: normalizeSpaces(m.name),
   })).filter(m => m.norm.length > 0);
 
-  // =========================================================
-  // 方針A: マスタ氏名でPDF全文を検索
-  // 「氏名→明細行→小計」の1ブロックを1人分として処理
-  // =========================================================
   if (masterNames.length > 0) {
     masterNames.forEach(master => {
-      // この氏名が登場する行インデックスをすべて収集
-      const nameFoundIdxs = [];
-      lines.forEach((line, idx) => {
-        const normLine = normalizeSpaces(line);
-        if (normLine.includes(master.norm)) {
-          nameFoundIdxs.push(idx);
+      // 氏名が含まれる全行を収集
+      const nameLineIdxs = [];
+      rawLines.forEach((line, idx) => {
+        if (normalizeSpaces(line).includes(master.norm)) {
+          nameLineIdxs.push(idx);
         }
       });
-      if (nameFoundIdxs.length === 0) return;
+      if (nameLineIdxs.length === 0) return;
 
       let totalAmount = 0;
 
-      nameFoundIdxs.forEach(startIdx => {
-        // ブロック終端を決定：
-        // ・別のマスタ氏名が登場した行
-        // ・「小計」行（小計行の直後で終了）
-        // ・25行後（上限）
-        let endIdx = Math.min(lines.length, startIdx + 25);
+      nameLineIdxs.forEach(startIdx => {
+        // ブロック終端を決定
+        let endIdx = Math.min(rawLines.length, startIdx + 20);
         for (let i = startIdx + 1; i < endIdx; i++) {
-          const line = lines[i];
-          const normLine = normalizeSpaces(line);
-
-          // 別のマスタ氏名が出たらブロック終了（その行は含めない）
-          const isOtherName = masterNames.some(
-            m => m.norm !== master.norm && normLine.includes(m.norm)
-          );
-          if (isOtherName) { endIdx = i; break; }
-
-          // 合計・小計行が出たらブロック終了（その行自体は含めない）
-          if (subtotalKeyword(line)) { endIdx = i; break; }
+          const l = rawLines[i];
+          // 別のマスタ氏名が出たら終了
+          if (masterNames.some(m => m.norm !== master.norm && normalizeSpaces(l).includes(m.norm))) {
+            endIdx = i; break;
+          }
+          // 合計・小計行で終了
+          if (isBlockEnd(l)) { endIdx = i; break; }
         }
 
-        // ブロック内（氏名行の次から終端まで）の明細金額を合算
-        const blockLines = lines.slice(startIdx + 1, endIdx);
-        let detailSum = 0;
-        let hasDetail = false;
+        // 氏名行 + 後続行をすべてスキャン
+        const blockLines = rawLines.slice(startIdx, endIdx);
+        let blockAmount = 0;
 
         blockLines.forEach(line => {
-          // 合計・小計行はスキップ
-          if (subtotalKeyword(line)) return;
-          // 消費税・税込行はスキップ（内税・外税の表記も除外）
-          if (/消費税|内税|外税|税込|税抜/.test(line)) return;
+          if (excludeKeyword.test(line)) return;
+          if (isBlockEnd(line)) return;
 
-          if (detailKeyword.test(line)) {
-            // 明細キーワードがある行：最後の数値を採用
-            const nums = extractNums(line);
-            if (nums.length > 0) {
-              detailSum += nums[nums.length - 1];
-              hasDetail = true;
-            }
-          } else {
-            // 明細キーワードがない行でも数値のみの行は金額行として合算
-            // （PDF抽出でキーワードと金額が別行になるケースに対応）
-            const nums = extractNums(line);
-            // 数値が1つだけある行を金額行とみなす
-            if (nums.length === 1 && nums[0] >= 1000) {
-              detailSum += nums[0];
-              hasDetail = true;
-            }
+          const nums = extractNums(line);
+          if (nums.length === 0) return;
+
+          if (amountLineKeyword.test(line)) {
+            // 明細キーワード行：最後の数値が金額
+            // （単価2,600と金額208,000が混在する場合、最後が金額）
+            blockAmount += nums[nums.length - 1];
+          } else if (nums.length === 1 && nums[0] >= 500 && nums[0] < 500000) {
+            // 数値1つだけの行（交通費等の補助費用行）
+            blockAmount += nums[0];
+          } else if (nums.length >= 2) {
+            // 氏名行に複数数値がある場合（モトヤ型: 時間数・単価・金額が混在）
+            // 最大値を金額として採用（時間数120より金額282,000が大きい）
+            const maxNum = Math.max(...nums);
+            if (maxNum >= 10000) blockAmount += maxNum;
           }
         });
-
-        // 明細行がなかった場合はブロック内最大値をフォールバックとして使用
-        let blockAmount = 0;
-        if (hasDetail && detailSum > 0) {
-          blockAmount = detailSum;
-        } else {
-          const allNums = blockLines
-            .filter(l => !subtotalKeyword(l) && !/消費税|内税|外税|税込|税抜/.test(l))
-            .flatMap(l => extractNums(l));
-          if (allNums.length > 0) blockAmount = Math.max(...allNums);
-        }
 
         totalAmount += blockAmount;
       });
@@ -560,44 +530,27 @@ function parsePdfText(text, masterData) {
     });
   }
 
-  // =========================================================
-  // 方針B: マスタ未登録 or 照合できなかった場合
-  // 日本語氏名パターンで検索（同じブロック区切りロジックを適用）
-  // =========================================================
+  // フォールバック: マスタ未登録時、氏名パターンで検索
   if (results.length === 0) {
-    const namePattern = /[\u4e00-\u9fa5]{1,4}[\s\u3000　][\u4e00-\u9fa5]{1,4}/g;
+    const namePattern = /[\u4e00-\u9fa5]{1,4}[\s\u3000\u3000][\u4e00-\u9fa5]{1,4}/g;
     const foundNames = new Set();
-
-    lines.forEach((line, startIdx) => {
-      const nameMatches = line.match(namePattern);
-      if (!nameMatches) return;
-      nameMatches.forEach(rawName => {
+    rawLines.forEach((line, startIdx) => {
+      (line.match(namePattern) || []).forEach(rawName => {
         const name = rawName.trim();
-        if (foundNames.has(name)) return;
-        if (/合計|請求|消費|内訳|小計|明細|御中|様|会社|株式/.test(name)) return;
+        if (foundNames.has(name) || /合計|請求|消費|内訳|小計|明細|御中|様|会社|株式/.test(name)) return;
         foundNames.add(name);
-
-        // ブロック終端を探す
-        let endIdx = Math.min(lines.length, startIdx + 25);
+        let endIdx = Math.min(rawLines.length, startIdx + 20);
         for (let i = startIdx + 1; i < endIdx; i++) {
-          if (subtotalKeyword(lines[i])) { endIdx = i; break; }
+          if (isBlockEnd(rawLines[i])) { endIdx = i; break; }
         }
-
-        const blockLines = lines.slice(startIdx + 1, endIdx);
-        let detailSum = 0;
-        let hasDetail = false;
-        blockLines.forEach(l => {
-          if (detailKeyword.test(l)) {
-            const nums = extractNums(l);
-            if (nums.length > 0) { detailSum += nums[nums.length - 1]; hasDetail = true; }
-          }
-        });
-
         let amount = 0;
-        if (hasDetail && detailSum > 0) {
-          amount = detailSum;
-        } else {
-          const allNums = blockLines.flatMap(l => extractNums(l));
+        rawLines.slice(startIdx, endIdx).forEach(l => {
+          if (excludeKeyword.test(l) || isBlockEnd(l)) return;
+          const nums = extractNums(l);
+          if (amountLineKeyword.test(l) && nums.length > 0) amount += nums[nums.length - 1];
+        });
+        if (amount === 0) {
+          const allNums = rawLines.slice(startIdx, endIdx).filter(l => !excludeKeyword.test(l)).flatMap(l => extractNums(l));
           if (allNums.length > 0) amount = Math.max(...allNums);
         }
         if (amount > 0) results.push({ name, amount, matched: false, master: null });
@@ -605,28 +558,20 @@ function parsePdfText(text, masterData) {
     });
   }
 
-  // =========================================================
-  // 方針C: どうしても氏名が取れない場合、請求合計金額だけ拾う
-  // =========================================================
+  // 最終フォールバック: 御請求額キーワード
   if (results.length === 0) {
     let maxAmount = 0;
-    lines.forEach(line => {
-      if (totalKeyword.test(line)) {
+    rawLines.forEach(line => {
+      if (/御請求|ご請求|請求金額|総合計|合計金額/.test(line)) {
         const nums = extractNums(line);
-        if (nums.length > 0) {
-          const candidate = Math.max(...nums);
-          if (candidate > maxAmount) maxAmount = candidate;
-        }
+        if (nums.length > 0) maxAmount = Math.max(maxAmount, ...nums);
       }
     });
-    if (maxAmount > 0) {
-      results.push({ name: "", amount: maxAmount, matched: false, master: null });
-    }
+    if (maxAmount > 0) results.push({ name: "", amount: maxAmount, matched: false, master: null });
   }
 
   return results;
 }
-
 // ============================================================
 // TAB: インポート準備
 // ============================================================
