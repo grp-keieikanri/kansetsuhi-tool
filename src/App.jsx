@@ -535,55 +535,51 @@ function parsePdfText(text, masterData) {
 
       let totalAmount = 0;
 
-      nameLineIdxs.forEach(startIdx => {
-        // ブロック終端を決定
-        let endIdx = Math.min(rawLines.length, startIdx + 20);
+      // 各氏名出現行を処理
+      // パーソル型（同一人物が複数回出る）は全ブロック合算
+      // エキスパート型・スタッフサービス型は最初の請求明細行のみ使用
+      nameLineIdxs.forEach((startIdx, loopIdx) => {
+        const startLine = rawLines[startIdx];
+
+        // 2番目以降のヒット行は、請求明細行（年月日含む or 明細キーワード含む）のみ処理
+        // 勤怠一覧等の行はスキップ
+        if (loopIdx > 0 && !isBillingDetailLine(startLine) && !amountLineKeyword.test(startLine)) return;
+
+        // ブロック終端を決定（最大10行）
+        let endIdx = Math.min(rawLines.length, startIdx + 10);
         for (let i = startIdx + 1; i < endIdx; i++) {
           const l = rawLines[i];
           const normL = normalizeSpaces(l);
-          // 別のマスタ氏名が出たら終了
           if (masterNames.some(m => m.norm !== master.norm && normL.includes(m.norm))) {
             endIdx = i; break;
           }
-          // 合計・小計行で終了
           if (isBlockEnd(l)) { endIdx = i; break; }
-          // スタッフ番号（5〜10桁の数字）で始まる行は次の人の行 → 終了
-          // エキスパートスタッフ型: 「20011795 安田 加代 ...」
           if (/^\d{5,10}\s+[\u4e00-\u9fa5]/.test(l)) { endIdx = i; break; }
         }
 
-        // 氏名行 + 後続行をすべてスキャン
         const blockLines = rawLines.slice(startIdx, endIdx);
         let blockAmount = 0;
 
         blockLines.forEach(line => {
-          if (excludeKeyword.test(line)) return;
-          if (isBlockEnd(line)) return;
-          if (isAttendanceLine(line)) return; // 勤怠一覧行は除外
-          if (isDeptLine(line)) return; // 部署名行は除外
+          if (excludeKeyword.test(line) || isBlockEnd(line) || isAttendanceLine(line) || isDeptLine(line)) return;
 
-          const nums = extractNums(line);
-          if (nums.length === 0) return;
+          const lineNoDecimal = line.replace(/\d+\.\d+/g, "");
+          const cleanNums = (lineNoDecimal.match(/[\d,]{3,}/g) || [])
+            .map(n => parseInt(n.replace(/,/g, ""), 10))
+            .filter(n => n >= 100 && n <= 9999999);
+
+          if (cleanNums.length === 0) return;
 
           if (amountLineKeyword.test(line)) {
             // 明細キーワード行：最後の整数値が金額
-            // 小数点を含む数値・契約番号（10桁超）を除外
-            // まず小数を含む部分を削除してから数値を抽出
-            const lineNoDecimal = line.replace(/\d+\.\d+/g, ""); // 168.00, 4.00など削除
-            const intNums = (lineNoDecimal.match(/[\d,]{3,}/g) || [])
-              .map(n => parseInt(n.replace(/,/g, ""), 10))
-              .filter(n => n >= 100 && n <= 9999999); // 1000万以上は契約番号等として除外
-            if (intNums.length > 0) blockAmount += intNums[intNums.length - 1];
-          } else if (nums.length === 1 && nums[0] >= 500 && nums[0] < 500000) {
-            // 数値1つだけの行（交通費等の補助費用行）
-            blockAmount += nums[0];
-          } else if (nums.length >= 2) {
-            // 氏名行に複数数値がある場合（モトヤ型・エキスパート型）
-            // 小数除外、契約番号除外（9桁超）、100万以下の最大値を採用
-            const intNums = (line.match(/(?<![\d.])[\d,]{3,}(?![\d.])/g) || [])
-              .map(n => parseInt(n.replace(/,/g, ""), 10))
-              .filter(n => n >= 1000 && n <= 9999999); // 契約番号除外
-            if (intNums.length > 0) blockAmount += Math.max(...intNums);
+            blockAmount += cleanNums[cleanNums.length - 1];
+          } else if (cleanNums.length === 1 && cleanNums[0] >= 500 && cleanNums[0] < 500000) {
+            // 数値1つ（交通費等）
+            blockAmount += cleanNums[0];
+          } else if (cleanNums.length >= 2 && loopIdx === 0) {
+            // 氏名行に複数数値（モトヤ型・エキスパート型）：最大値採用
+            // ※2番目以降は誤合算防止のためスキップ
+            blockAmount += Math.max(...cleanNums);
           }
         });
 
