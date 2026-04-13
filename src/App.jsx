@@ -485,7 +485,7 @@ function parsePdfText(text, masterData) {
 
   // 請求明細行の判定（年月日パターンを含む行を請求明細とみなす）
   // 例: 「伊藤 芳恵 26/03/01～26/03/31 普通 ...」
-  const isBillingDetailLine = (line) => /\d{2}\/\d{2}\/\d{2}/.test(line);
+  const isBillingDetailLine = (line) => /\d{2}\s*\/\s*\d{2}\s*\/\s*\d{2}/.test(line);
 
   // 勤怠一覧行の除外判定（曜日・出勤・休日などの勤怠キーワードを含む行）
   const isAttendanceLine = (line) => /出勤|休日|有休|欠勤|曜日|開始|終了|休憩|実働/.test(line);
@@ -564,18 +564,65 @@ function parsePdfText(text, masterData) {
             // 数値1つだけの行（交通費等）
             blockAmount += cleanNums[0];
           } else if (cleanNums.length >= 2) {
-            // 複数数値の行（氏名行に金額が含まれるケース）：最大値を採用
-            blockAmount += Math.max(...cleanNums);
+            // 複数数値の行（氏名行に金額が含まれるケース）
+            // エキスパート型: 「20014906 田中 明秀 20040006001820001 1:課税 2,250 160.00 時間 360,000」
+            // → 行末の数値（金額列）を採用。ただし小数除去後の最後の値
+            // スタッフ番号（8桁）・契約番号（16桁）は既にフィルタ済み（<=9999999）
+            // 残った数値の中で最後のものが金額
+            blockAmount += cleanNums[cleanNums.length - 1];
           }
         });
 
         totalAmount += blockAmount;
       });
 
-      if (totalAmount > 0) {
+      // 金額が妥当な範囲（1万円以上）の場合のみ採用
+      // リクルート型のように明細行から誤った小さな金額が取れた場合は除外
+      if (totalAmount >= 10000) {
         results.push({ name: master.name, amount: totalAmount, matched: true, master });
       }
     });
+  }
+
+  // マスタ照合済みだが金額が取れなかった人のフォールバック
+  // 「今回ご請求額」直後の金額で補完（リクルート型対応）
+  if (masterNames.length > 0 && results.length === 0) {
+    // ￥マークまたは今回ご請求額キーワードから金額を取得
+    let fallbackAmount = 0;
+    const requestKeyword2 = /今回.*請求額|今回.*ご請求|御請求額|ご請求額/;
+    for (let i = 0; i < rawLines.length; i++) {
+      const line = rawLines[i];
+      if (/^[￥¥$]\s*$/.test(line.trim())) {
+        for (let j = i + 1; j <= Math.min(i + 2, rawLines.length - 1); j++) {
+          const nums = extractNums(rawLines[j]).filter(n => n >= 10000);
+          if (nums.length > 0) { fallbackAmount = Math.max(fallbackAmount, ...nums); break; }
+        }
+      }
+      const yenMatch = line.match(/[￥¥$]\s*([\d,，]+)/);
+      if (yenMatch) {
+        const amt = parseInt(yenMatch[1].replace(/[,，]/g, ""), 10);
+        if (amt >= 10000 && amt > fallbackAmount) fallbackAmount = amt;
+      }
+    }
+    if (fallbackAmount === 0) {
+      for (let i = 0; i < rawLines.length; i++) {
+        if (requestKeyword2.test(rawLines[i])) {
+          for (let j = i; j <= Math.min(i + 5, rawLines.length - 1); j++) {
+            const nums = extractNums(rawLines[j]).filter(n => n >= 10000);
+            if (nums.length > 0) { fallbackAmount = Math.max(fallbackAmount, ...nums); break; }
+          }
+        }
+      }
+    }
+    if (fallbackAmount > 0) {
+      // マスタ内で最初の人に紐づける（1人しかいない場合）
+      // 複数人いる場合は手動修正に委ねる
+      if (masterNames.length === 1) {
+        results.push({ name: masterNames[0].name, amount: fallbackAmount, matched: true, master: masterNames[0] });
+      } else {
+        results.push({ name: "", amount: fallbackAmount, matched: false, master: null });
+      }
+    }
   }
 
   // フォールバック: マスタ未登録時、氏名パターンで検索
