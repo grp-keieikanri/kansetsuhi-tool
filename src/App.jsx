@@ -635,6 +635,8 @@ function ImportPrepTab() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("");
+  const [debugText, setDebugText] = useState(""); // デバッグ用
+  const [showDebug, setShowDebug] = useState(false);
   const masterRef = useRef();
   const pdfRef = useRef();
 
@@ -672,6 +674,7 @@ function ImportPrepTab() {
     for (const file of files) {
       setStatus(`解析中: ${file.name}`);
       const text = await extractTextFromPdf(file);
+      setDebugText(prev => prev + "\n\n=== " + file.name + " ===\n" + text);
       const parsed = parsePdfText(text, masterData);
       parsed.forEach(item => {
         const extractedName = item.name;
@@ -817,6 +820,20 @@ function ImportPrepTab() {
         </button>
         <input ref={pdfRef} type="file" accept=".pdf" multiple className="hidden" onChange={handlePdfImport} />
         {status && <p className="mt-2 text-sm text-gray-500">{status}</p>}
+        {debugText && (
+          <div className="mt-3">
+            <button onClick={() => setShowDebug(!showDebug)}
+              className="text-xs text-indigo-600 hover:underline">
+              {showDebug ? "▲ PDFテキスト抽出結果を隠す" : "▼ PDFテキスト抽出結果を確認する（デバッグ用）"}
+            </button>
+            {showDebug && (
+              <textarea readOnly value={debugText}
+                className="mt-2 w-full h-64 text-xs font-mono border border-gray-200 rounded p-2 bg-gray-50"
+                onClick={e => e.target.select()}
+              />
+            )}
+          </div>
+        )}
       </div>
 
       {/* STEP 3 */}
