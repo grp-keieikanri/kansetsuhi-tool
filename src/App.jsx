@@ -439,98 +439,91 @@ async function extractTextFromPdf(file) {
   });
 }
 
-// PDFテキストから氏名と金額を解析するロジック（改良版）
+// PDFテキストから氏名と金額を解析するロジック（改良版v3）
 function parsePdfText(text, masterData) {
   const results = [];
   const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
 
-  // 行から全数値を抽出するヘルパー
+  // 行から数値を抽出するヘルパー（3桁以上の数字）
   const extractNums = (str) => {
     const matches = str.match(/[\d,，]{3,}/g) || [];
     return matches.map(n => parseInt(n.replace(/[,，]/g, ""), 10)).filter(n => n >= 100);
   };
 
-  // 小計・合計・税込を示すキーワード（金額集計の区切り）
-  const subtotalKeyword = /小計|合計|税込|税抜|請求額|御請求|ご請求|消費税|内税|外税|total/i;
+  // 明細行キーワード（時間内・時間外・交通費など）
+  const detailKeyword = /時間内|時間外|深夜|早朝|休日|通勤|交通|基本|普通残|残業|深夜残|交通費|手当|overtime|regular/i;
 
-  // 明細行の金額項目キーワード（派遣請求書の内訳行）
-  const detailKeyword = /時間内|時間外|深夜|早朝|休日|通勤|交通|基本|普通残|残業|深夜残|交通費|手当|費用|overtime|regular/i;
+  // 小計キーワード（ブロックの区切り＝小計行自体は合算しない）
+  const subtotalKeyword = /^小計|^合計|小計$|合計$/;
+
+  // 請求合計キーワード（最終的な請求額）
+  const totalKeyword = /御請求|ご請求|請求金額|税込合計|総合計|合計金額|請求額|税込$/;
 
   // マスタ氏名を正規化して準備
   const masterNames = masterData.map(m => ({
     ...m,
     norm: normalizeSpaces(m.name),
-  }));
+  })).filter(m => m.norm.length > 0);
 
   // =========================================================
-  // 方針A: マスタ氏名でPDF全文を検索し、氏名ブロックの金額を合算
+  // 方針A: マスタ氏名でPDF全文を検索
+  // 「氏名→明細行→小計」の1ブロックを1人分として処理
   // =========================================================
   if (masterNames.length > 0) {
     masterNames.forEach(master => {
-      // 氏名が含まれる行インデックスをすべて収集（同一人物が複数回出る場合対応）
+      // この氏名が登場する行インデックスをすべて収集
       const nameFoundIdxs = [];
       lines.forEach((line, idx) => {
         const normLine = normalizeSpaces(line);
-        if (normLine.includes(master.norm) || normLine.includes(normalizeSpaces(master.name))) {
+        if (normLine.includes(master.norm)) {
           nameFoundIdxs.push(idx);
         }
       });
       if (nameFoundIdxs.length === 0) return;
 
-      // 氏名が見つかった位置ごとに、後続の明細金額を合算する
-      // 「氏名行〜次の氏名行 or 合計行」の範囲を1ブロックとして処理
       let totalAmount = 0;
+
       nameFoundIdxs.forEach(startIdx => {
-        // このブロックの終端を探す（次のマスタ氏名 or 合計キーワード or 20行後）
+        // ブロック終端を決定：
+        // ・別のマスタ氏名が登場した行
+        // ・「小計」行（小計行の直後で終了）
+        // ・25行後（上限）
         let endIdx = Math.min(lines.length, startIdx + 25);
         for (let i = startIdx + 1; i < endIdx; i++) {
-          const normLine = normalizeSpaces(lines[i]);
-          // 別のマスタ氏名が出たらブロック終了
+          const line = lines[i];
+          const normLine = normalizeSpaces(line);
+
+          // 別のマスタ氏名が出たらブロック終了（その行は含めない）
           const isOtherName = masterNames.some(
-            m => m.norm !== master.norm && normLine.includes(m.norm) && m.norm.length > 0
+            m => m.norm !== master.norm && normLine.includes(m.norm)
           );
           if (isOtherName) { endIdx = i; break; }
+
+          // 小計行が出たらブロック終了（小計行自体は含めない）
+          if (subtotalKeyword.test(line)) { endIdx = i; break; }
         }
 
-        // ブロック内の行を解析
-        const blockLines = lines.slice(startIdx, endIdx);
-
-        // 【派遣請求書パターン】
-        // 明細行（時間内・時間外・交通費等）の金額を合算して小計を求める
+        // ブロック内（氏名行の次から終端まで）の明細金額を合算
+        const blockLines = lines.slice(startIdx + 1, endIdx);
         let detailSum = 0;
         let hasDetail = false;
-        let subtotalAmount = 0;
 
         blockLines.forEach(line => {
           if (detailKeyword.test(line)) {
-            // 明細行：金額を合算
             const nums = extractNums(line);
             if (nums.length > 0) {
+              // 行内の最後の数値を金額として採用
               detailSum += nums[nums.length - 1];
               hasDetail = true;
-            }
-          } else if (subtotalKeyword.test(line)) {
-            // 小計・合計行：この値を優先候補として記録
-            const nums = extractNums(line);
-            if (nums.length > 0) {
-              const candidate = nums[nums.length - 1];
-              // より大きい合計を優先（総合計 > 小計）
-              if (candidate > subtotalAmount) subtotalAmount = candidate;
             }
           }
         });
 
-        // 金額の採用優先順位：
-        // 1. 明細合算値（時間内+時間外+交通費など）
-        // 2. 合計・小計キーワード行の金額
-        // 3. ブロック内で最大の金額
+        // 明細行がなかった場合はブロック内最大値をフォールバックとして使用
         let blockAmount = 0;
         if (hasDetail && detailSum > 0) {
           blockAmount = detailSum;
-        } else if (subtotalAmount > 0) {
-          blockAmount = subtotalAmount;
         } else {
-          // フォールバック：ブロック内の全数値から最大値
           const allNums = blockLines.flatMap(l => extractNums(l));
           if (allNums.length > 0) blockAmount = Math.max(...allNums);
         }
@@ -545,38 +538,42 @@ function parsePdfText(text, masterData) {
   }
 
   // =========================================================
-  // 方針B: マスタ照合できなかった or マスタ未登録の場合
-  // 日本語氏名パターンで検索
+  // 方針B: マスタ未登録 or 照合できなかった場合
+  // 日本語氏名パターンで検索（同じブロック区切りロジックを適用）
   // =========================================================
   if (results.length === 0) {
     const namePattern = /[\u4e00-\u9fa5]{1,4}[\s\u3000　][\u4e00-\u9fa5]{1,4}/g;
     const foundNames = new Set();
-    lines.forEach((line, idx) => {
+
+    lines.forEach((line, startIdx) => {
       const nameMatches = line.match(namePattern);
       if (!nameMatches) return;
       nameMatches.forEach(rawName => {
         const name = rawName.trim();
         if (foundNames.has(name)) return;
-        // 「合計」「請求書」など氏名でない単語を除外
-        if (/合計|請求|消費|内訳|小計|明細|御中|様|会社/.test(name)) return;
+        if (/合計|請求|消費|内訳|小計|明細|御中|様|会社|株式/.test(name)) return;
         foundNames.add(name);
 
-        // 後続20行の明細を合算
-        const blockLines = lines.slice(idx, Math.min(lines.length, idx + 20));
+        // ブロック終端を探す
+        let endIdx = Math.min(lines.length, startIdx + 25);
+        for (let i = startIdx + 1; i < endIdx; i++) {
+          if (subtotalKeyword.test(lines[i])) { endIdx = i; break; }
+        }
+
+        const blockLines = lines.slice(startIdx + 1, endIdx);
         let detailSum = 0;
         let hasDetail = false;
-        let subtotalAmount = 0;
         blockLines.forEach(l => {
           if (detailKeyword.test(l)) {
             const nums = extractNums(l);
             if (nums.length > 0) { detailSum += nums[nums.length - 1]; hasDetail = true; }
-          } else if (subtotalKeyword.test(l)) {
-            const nums = extractNums(l);
-            if (nums.length > 0 && nums[nums.length-1] > subtotalAmount) subtotalAmount = nums[nums.length-1];
           }
         });
-        let amount = hasDetail && detailSum > 0 ? detailSum : subtotalAmount;
-        if (amount === 0) {
+
+        let amount = 0;
+        if (hasDetail && detailSum > 0) {
+          amount = detailSum;
+        } else {
           const allNums = blockLines.flatMap(l => extractNums(l));
           if (allNums.length > 0) amount = Math.max(...allNums);
         }
@@ -586,13 +583,12 @@ function parsePdfText(text, masterData) {
   }
 
   // =========================================================
-  // 方針C: 氏名がどうしても取れない場合、合計金額だけ拾う
+  // 方針C: どうしても氏名が取れない場合、請求合計金額だけ拾う
   // =========================================================
   if (results.length === 0) {
-    const amountKeywords = /御請求金額|ご請求金額|請求金額|税込合計|総合計|合計金額/;
     let maxAmount = 0;
     lines.forEach(line => {
-      if (amountKeywords.test(line)) {
+      if (totalKeyword.test(line)) {
         const nums = extractNums(line);
         if (nums.length > 0) {
           const candidate = Math.max(...nums);
@@ -946,4 +942,3 @@ export default function App() {
     </div>
   );
 }
-
