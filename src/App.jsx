@@ -451,13 +451,20 @@ function parsePdfText(text, masterData) {
   };
 
   // 明細行キーワード（時間内・時間外・交通費など）
-  const detailKeyword = /時間内|時間外|深夜|早朝|休日|通勤|交通|基本|普通残|残業|深夜残|交通費|手当|overtime|regular/i;
+  // ※氏名行の直後に続く金額行を対象とする
+  const detailKeyword = /時間内|時間外|深夜|早朝|休日|通勤|交通費|交通|基本|普通残|残業|深夜残|手当|overtime|regular/i;
 
-  // 小計キーワード（ブロックの区切り＝小計行自体は合算しない）
-  const subtotalKeyword = /^小計|^合計|小計$|合計$/;
+  // ブロック区切りキーワード（この行自体は合算しない・ブロック終端とみなす）
+  // 「合計」「小計」単体の行、または行頭・行末に来る場合
+  const subtotalKeyword = (line) => {
+    const t = line.trim();
+    return /^(小計|合計)$/.test(t) ||        // 「合計」「小計」だけの行
+           /^合計[\s:：]|^小計[\s:：]/.test(t) || // 「合計:」「小計 」で始まる行
+           /[\s:：](合計|小計)$/.test(t);         // 「 合計」「：小計」で終わる行
+  };
 
   // 請求合計キーワード（最終的な請求額）
-  const totalKeyword = /御請求|ご請求|請求金額|税込合計|総合計|合計金額|請求額|税込$/;
+  const totalKeyword = /御請求|ご請求|請求金額|税込合計|総合計|合計金額|請求額/;
 
   // マスタ氏名を正規化して準備
   const masterNames = masterData.map(m => ({
@@ -499,8 +506,8 @@ function parsePdfText(text, masterData) {
           );
           if (isOtherName) { endIdx = i; break; }
 
-          // 小計行が出たらブロック終了（小計行自体は含めない）
-          if (subtotalKeyword.test(line)) { endIdx = i; break; }
+          // 合計・小計行が出たらブロック終了（その行自体は含めない）
+          if (subtotalKeyword(line)) { endIdx = i; break; }
         }
 
         // ブロック内（氏名行の次から終端まで）の明細金額を合算
@@ -509,11 +516,25 @@ function parsePdfText(text, masterData) {
         let hasDetail = false;
 
         blockLines.forEach(line => {
+          // 合計・小計行はスキップ
+          if (subtotalKeyword(line)) return;
+          // 消費税・税込行はスキップ（内税・外税の表記も除外）
+          if (/消費税|内税|外税|税込|税抜/.test(line)) return;
+
           if (detailKeyword.test(line)) {
+            // 明細キーワードがある行：最後の数値を採用
             const nums = extractNums(line);
             if (nums.length > 0) {
-              // 行内の最後の数値を金額として採用
               detailSum += nums[nums.length - 1];
+              hasDetail = true;
+            }
+          } else {
+            // 明細キーワードがない行でも数値のみの行は金額行として合算
+            // （PDF抽出でキーワードと金額が別行になるケースに対応）
+            const nums = extractNums(line);
+            // 数値が1つだけある行を金額行とみなす
+            if (nums.length === 1 && nums[0] >= 1000) {
+              detailSum += nums[0];
               hasDetail = true;
             }
           }
@@ -524,7 +545,9 @@ function parsePdfText(text, masterData) {
         if (hasDetail && detailSum > 0) {
           blockAmount = detailSum;
         } else {
-          const allNums = blockLines.flatMap(l => extractNums(l));
+          const allNums = blockLines
+            .filter(l => !subtotalKeyword(l) && !/消費税|内税|外税|税込|税抜/.test(l))
+            .flatMap(l => extractNums(l));
           if (allNums.length > 0) blockAmount = Math.max(...allNums);
         }
 
@@ -557,7 +580,7 @@ function parsePdfText(text, masterData) {
         // ブロック終端を探す
         let endIdx = Math.min(lines.length, startIdx + 25);
         for (let i = startIdx + 1; i < endIdx; i++) {
-          if (subtotalKeyword.test(lines[i])) { endIdx = i; break; }
+          if (subtotalKeyword(lines[i])) { endIdx = i; break; }
         }
 
         const blockLines = lines.slice(startIdx + 1, endIdx);
