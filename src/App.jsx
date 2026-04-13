@@ -472,7 +472,7 @@ function parsePdfText(text, masterData) {
   };
 
   // 金額明細キーワード
-  const amountLineKeyword = /時間内|時間外|深夜|早朝|休日|通勤|交通費|交通|基本|普通残|残業|深夜残|手当/;
+  const amountLineKeyword = /時間内|時間外残業|時間外|深夜|早朝|休日|通勤|交通費|交通|基本|普通残|残業|深夜残|手当/;
 
   // 除外キーワード（合算しない行）
   const excludeKeyword = /消費税|内税|外税|税込|税抜|立替|相殺|業務料合計|取引銀行|振込/;
@@ -492,25 +492,14 @@ function parsePdfText(text, masterData) {
 
   if (masterNames.length > 0) {
     masterNames.forEach(master => {
-      // 氏名が含まれる全行を収集
-      // 完全一致優先、なければ名字（最初の2文字以上）で部分一致
+      // 氏名が含まれる全行を収集（完全一致のみ・誤マッチ防止）
       const nameLineIdxs = [];
-      const lastNameNorm = master.norm.slice(0, 2); // 名字の先頭2文字
       rawLines.forEach((line, idx) => {
         const normLine = normalizeSpaces(line);
         if (normLine.includes(master.norm)) {
           nameLineIdxs.push(idx);
         }
       });
-      // 完全一致がなく、名字2文字以上ある場合は部分一致も試みる
-      if (nameLineIdxs.length === 0 && lastNameNorm.length >= 2) {
-        rawLines.forEach((line, idx) => {
-          const normLine = normalizeSpaces(line);
-          if (normLine.includes(lastNameNorm)) {
-            nameLineIdxs.push(idx);
-          }
-        });
-      }
       if (nameLineIdxs.length === 0) return;
 
       let totalAmount = 0;
@@ -540,17 +529,23 @@ function parsePdfText(text, masterData) {
           if (nums.length === 0) return;
 
           if (amountLineKeyword.test(line)) {
-            // 明細キーワード行：最後の数値が金額
-            // （単価2,600と金額208,000が混在する場合、最後が金額）
-            blockAmount += nums[nums.length - 1];
+            // 明細キーワード行：最後の整数値が金額
+            // 「時間外残業 1:課税 2,562 4.00 時間 10,248」→ 10,248
+            // 小数を含む数値（168.00など）は除外して整数のみ取得
+            const intNums = (line.match(/(?<![\d.])[\d,]{3,}(?![\d.])/g) || [])
+              .map(n => parseInt(n.replace(/,/g, ""), 10))
+              .filter(n => n >= 100);
+            if (intNums.length > 0) blockAmount += intNums[intNums.length - 1];
           } else if (nums.length === 1 && nums[0] >= 500 && nums[0] < 500000) {
             // 数値1つだけの行（交通費等の補助費用行）
             blockAmount += nums[0];
           } else if (nums.length >= 2) {
-            // 氏名行に複数数値がある場合（モトヤ型: 時間数・単価・金額が混在）
-            // 最大値を金額として採用（時間数120より金額282,000が大きい）
-            const maxNum = Math.max(...nums);
-            if (maxNum >= 10000) blockAmount += maxNum;
+            // 氏名行に複数数値がある場合（モトヤ型・エキスパート型）
+            // 小数除外した上で最大値を金額として採用
+            const intNums = (line.match(/(?<![\d.])[\d,]{3,}(?![\d.])/g) || [])
+              .map(n => parseInt(n.replace(/,/g, ""), 10))
+              .filter(n => n >= 1000);
+            if (intNums.length > 0) blockAmount += Math.max(...intNums);
           }
         });
 
@@ -852,10 +847,27 @@ function ImportPrepTab() {
               <span className="w-6 h-6 rounded-full bg-indigo-600 text-white text-xs flex items-center justify-center font-bold">3</span>
               <span className="font-semibold text-gray-800">確認・修正</span>
             </div>
-            <button onClick={handleExport}
-              className="flex items-center gap-1.5 px-3 py-2 bg-emerald-600 text-white text-sm rounded-lg hover:bg-emerald-700 transition-colors">
-              📥 Excel出力
-            </button>
+            <div className="flex gap-2">
+              <button onClick={() => setRows(prev => [...prev, {
+                id: Math.random().toString(36).slice(2),
+                extractedName: "（手入力）",
+                amount: 0,
+                name: "",
+                employmentType: "派遣社員",
+                department: "",
+                criteriaValue: 0,
+                taxType: "taxExcluded",
+                matched: false,
+                fileName: "手入力",
+              }])}
+                className="flex items-center gap-1.5 px-3 py-2 bg-indigo-100 text-indigo-700 text-sm rounded-lg hover:bg-indigo-200 transition-colors">
+                ＋ 行追加
+              </button>
+              <button onClick={handleExport}
+                className="flex items-center gap-1.5 px-3 py-2 bg-emerald-600 text-white text-sm rounded-lg hover:bg-emerald-700 transition-colors">
+                📥 Excel出力
+              </button>
+            </div>
           </div>
           <p className="text-sm text-gray-500 mb-3">
             <span className="text-red-500 font-medium">赤背景</span>はマスタと不一致の行です。氏名を修正してください。
