@@ -505,64 +505,51 @@ function parsePdfText(text, masterData) {
 
   if (masterNames.length > 0) {
     masterNames.forEach(master => {
-      // 氏名が含まれる全行を収集（完全一致のみ・誤マッチ防止）
-      // 請求明細行（年月日パターン含む）を優先し、勤怠一覧行は後回し
-      const nameLineIdxs = [];
-      const nameLineIdxsFallback = [];
+      // 氏名が含まれる行を収集（勤怠一覧・部署名行は除外）
+      const billingLines = []; // 請求明細行（年月日含む・明細キーワード含む）
+      const otherLines  = []; // その他の行
+
       rawLines.forEach((line, idx) => {
-        const normLine = normalizeSpaces(line);
-        if (normLine.includes(master.norm)) {
-          if (isAttendanceLine(line)) return; // 勤怠一覧行はスキップ
-          if (isDeptLine(line)) return; // 部署名行はスキップ
-          if (isBillingDetailLine(line) || amountLineKeyword.test(line)) {
-            nameLineIdxs.unshift(idx); // 請求明細行を先頭に追加（優先）
-          } else {
-            nameLineIdxs.push(idx);
-          }
+        if (!normalizeSpaces(line).includes(master.norm)) return;
+        if (isAttendanceLine(line)) return;
+        if (isDeptLine(line)) return;
+        if (isBillingDetailLine(line) || amountLineKeyword.test(line)) {
+          billingLines.push(idx);
+        } else {
+          otherLines.push(idx);
         }
       });
-      // 勤怠一覧行しかない場合はフォールバックとして使用
-      if (nameLineIdxs.length === 0) {
-        rawLines.forEach((line, idx) => {
-          const normLine = normalizeSpaces(line);
-          if (normLine.includes(master.norm) && !isAttendanceLine(line)) {
-            nameLineIdxsFallback.push(idx);
-          }
-        });
-        nameLineIdxs.push(...nameLineIdxsFallback);
-      }
-      if (nameLineIdxs.length === 0) return;
+
+      // 請求明細行を優先、なければその他行を使用
+      const targetLines = billingLines.length > 0 ? billingLines : otherLines;
+      if (targetLines.length === 0) return;
 
       let totalAmount = 0;
 
-      // 各氏名出現行を処理
-      // パーソル型（同一人物が複数回出る）は全ブロック合算
-      // エキスパート型・スタッフサービス型は最初の請求明細行のみ使用
-      nameLineIdxs.forEach((startIdx, loopIdx) => {
-        const startLine = rawLines[startIdx];
-
-        // 2番目以降のヒット行は、請求明細行（年月日含む or 明細キーワード含む）のみ処理
-        // 勤怠一覧等の行はスキップ
-        if (loopIdx > 0 && !isBillingDetailLine(startLine) && !amountLineKeyword.test(startLine)) return;
-
-        // ブロック終端を決定（最大10行）
-        let endIdx = Math.min(rawLines.length, startIdx + 10);
+      targetLines.forEach(startIdx => {
+        // ブロック終端を決定（最大8行）
+        let endIdx = Math.min(rawLines.length, startIdx + 8);
         for (let i = startIdx + 1; i < endIdx; i++) {
           const l = rawLines[i];
           const normL = normalizeSpaces(l);
+          // 別のマスタ氏名が出たら終了
           if (masterNames.some(m => m.norm !== master.norm && normL.includes(m.norm))) {
             endIdx = i; break;
           }
+          // 合計・小計行で終了
           if (isBlockEnd(l)) { endIdx = i; break; }
+          // スタッフ番号行（エキスパート型の次の人）で終了
           if (/^\d{5,10}\s+[\u4e00-\u9fa5]/.test(l)) { endIdx = i; break; }
         }
 
+        // ブロック内の金額を集計
         const blockLines = rawLines.slice(startIdx, endIdx);
         let blockAmount = 0;
 
         blockLines.forEach(line => {
           if (excludeKeyword.test(line) || isBlockEnd(line) || isAttendanceLine(line) || isDeptLine(line)) return;
 
+          // 小数・契約番号を除いた整数リスト
           const lineNoDecimal = line.replace(/\d+\.\d+/g, "");
           const cleanNums = (lineNoDecimal.match(/[\d,]{3,}/g) || [])
             .map(n => parseInt(n.replace(/,/g, ""), 10))
@@ -571,14 +558,13 @@ function parsePdfText(text, masterData) {
           if (cleanNums.length === 0) return;
 
           if (amountLineKeyword.test(line)) {
-            // 明細キーワード行：最後の整数値が金額
+            // 明細キーワード行：最後の数値が金額
             blockAmount += cleanNums[cleanNums.length - 1];
           } else if (cleanNums.length === 1 && cleanNums[0] >= 500 && cleanNums[0] < 500000) {
-            // 数値1つ（交通費等）
+            // 数値1つだけの行（交通費等）
             blockAmount += cleanNums[0];
-          } else if (cleanNums.length >= 2 && loopIdx === 0) {
-            // 氏名行に複数数値（モトヤ型・エキスパート型）：最大値採用
-            // ※2番目以降は誤合算防止のためスキップ
+          } else if (cleanNums.length >= 2) {
+            // 複数数値の行（氏名行に金額が含まれるケース）：最大値を採用
             blockAmount += Math.max(...cleanNums);
           }
         });
