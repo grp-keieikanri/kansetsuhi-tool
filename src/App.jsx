@@ -419,20 +419,41 @@ async function extractTextFromPdf(file) {
         for (let i = 1; i <= pdf.numPages; i++) {
           const page = await pdf.getPage(i);
           const content = await page.getTextContent();
-          // 行単位で再構成（Y座標でグループ化）
           const items = content.items;
-          const lines = {};
+
+          // 方式1: Y座標でグループ化（通常のPDF）
+          const lineMap = {};
           items.forEach(item => {
+            if (!item.str || item.str.trim() === "") return;
             const y = Math.round(item.transform[5]);
-            if (!lines[y]) lines[y] = [];
-            lines[y].push(item.str);
+            if (!lineMap[y]) lineMap[y] = [];
+            lineMap[y].push({ x: item.transform[4], str: item.str });
           });
-          const sortedYs = Object.keys(lines).map(Number).sort((a, b) => b - a);
-          fullText += sortedYs.map(y => lines[y].join(" ")).join("\n") + "\n";
+          const sortedYs = Object.keys(lineMap).map(Number).sort((a, b) => b - a);
+          const lineTexts = sortedYs.map(y =>
+            lineMap[y].sort((a, b) => a.x - b.x).map(i => i.str).join(" ")
+          ).filter(l => l.trim());
+
+          // 方式2: テキストをそのまま連結（Y座標が取れない特殊PDFのフォールバック）
+          const rawText = items.map(i => i.str).join(" ");
+
+          // 行数が極端に少ない場合（Y座標方式で失敗）はrawTextを行分割して使用
+          if (lineTexts.length < 3 && rawText.trim().length > 50) {
+            // スペースや区切り文字で行を推定
+            const fallbackLines = rawText
+              .replace(/([。．！？\.!?])\s*/g, "$1\n")
+              .replace(/(\d{3,})\s+/g, "$1\n")
+              .split("\n")
+              .map(l => l.trim())
+              .filter(l => l.length > 0);
+            fullText += fallbackLines.join("\n") + "\n";
+          } else {
+            fullText += lineTexts.join("\n") + "\n";
+          }
         }
-        resolve(fullText);
+        resolve(fullText || "（テキスト抽出失敗）");
       } catch (err) {
-        resolve("");
+        resolve("（エラー: " + err.message + "）");
       }
     };
     reader.readAsArrayBuffer(file);
