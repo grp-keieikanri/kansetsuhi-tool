@@ -587,8 +587,35 @@ function parsePdfText(text, masterData) {
         totalAmount += blockAmount;
       });
 
-      // 金額が妥当な範囲（1万円以上）の場合のみ採用
-      // リクルート型のように明細行から誤った小さな金額が取れた場合は除外
+      // 金額が取れなかった場合は「今回ご請求額」フォールバックを使用（リクルート型対応）
+      if (totalAmount < 10000) {
+        // ￥マーク直後または今回ご請求額キーワード直後の金額を探す
+        const requestKw = /今回.*請求額|今回.*ご請求|御請求額|ご請求額/;
+        for (let i = 0; i < rawLines.length; i++) {
+          const line = rawLines[i];
+          if (/^[￥¥$]\s*$/.test(line.trim())) {
+            for (let j = i + 1; j <= Math.min(i + 2, rawLines.length - 1); j++) {
+              const nums = extractNums(rawLines[j]).filter(n => n >= 10000);
+              if (nums.length > 0) { totalAmount = Math.max(totalAmount, ...nums); break; }
+            }
+          }
+          const yenMatch = line.match(/[￥¥$]\s*([\d,，]+)/);
+          if (yenMatch) {
+            const amt = parseInt(yenMatch[1].replace(/[,，]/g, ""), 10);
+            if (amt >= 10000 && amt > totalAmount) totalAmount = amt;
+          }
+        }
+        if (totalAmount < 10000) {
+          for (let i = 0; i < rawLines.length; i++) {
+            if (requestKw.test(rawLines[i])) {
+              for (let j = i; j <= Math.min(i + 5, rawLines.length - 1); j++) {
+                const nums = extractNums(rawLines[j]).filter(n => n >= 10000);
+                if (nums.length > 0) { totalAmount = Math.max(totalAmount, ...nums); break; }
+              }
+            }
+          }
+        }
+      }
       if (totalAmount >= 10000) {
         results.push({ name: master.name, amount: totalAmount, matched: true, master });
       }
