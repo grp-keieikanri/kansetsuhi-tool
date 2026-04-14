@@ -528,6 +528,7 @@ function parsePdfText(text, masterData) {
       // 請求明細行を優先、なければその他行を使用
       const targetLines = billingLines.length > 0 ? billingLines : otherLines;
       if (targetLines.length === 0) return;
+      console.log("[DEBUG]", master.name, "billingLines:", billingLines, "otherLines:", otherLines, "targetLines:", targetLines);
 
       let totalAmount = 0;
 
