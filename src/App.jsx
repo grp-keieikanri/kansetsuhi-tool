@@ -530,7 +530,6 @@ function parsePdfText(text, masterData) {
       // 請求明細行を優先、なければその他行を使用
       const targetLines = billingLines.length > 0 ? billingLines : otherLines;
       if (targetLines.length === 0) return;
-      console.log("[DEBUG]", master.name, "billingLines:", billingLines, "otherLines:", otherLines, "targetLines:", targetLines);
 
       let totalAmount = 0;
 
@@ -567,19 +566,15 @@ function parsePdfText(text, masterData) {
 
           if (amountLineKeyword.test(line)) {
             const val = cleanNums[cleanNums.length - 1];
-            console.log("[BLOCK]", master.name, "+"+val, "(amountKw):", line.substring(0,50));
             blockAmount += val;
           } else if (cleanNums.length === 1 && cleanNums[0] >= 50000 && cleanNums[0] < 500000) {
             // 単独数値行は5万円以上のみ（小額は書類番号・社員番号として除外）
-            console.log("[BLOCK]", master.name, "+"+cleanNums[0], "(single):", line.substring(0,50));
             blockAmount += cleanNums[0];
           } else if (cleanNums.length >= 2) {
             const val = cleanNums[cleanNums.length - 1];
             if (val >= 10000) {
-              console.log("[BLOCK]", master.name, "+"+val, "(multi):", line.substring(0,50));
               blockAmount += val;
             } else {
-              console.log("[BLOCK SKIP]", master.name, "val<10000:", line.substring(0,50));
             }
           }
         });
