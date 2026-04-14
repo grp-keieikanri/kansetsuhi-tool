@@ -476,7 +476,7 @@ function parsePdfText(text, masterData) {
   const amountLineKeyword = /時間内|時間外残業|時間外|深夜|早朝|休日|通勤|交通費|交通|基本|普通残|割増|残業|深夜残|手当/;
 
   // 除外キーワード（合算しない行）
-  const excludeKeyword = /消費税|内税|外税|税込|税抜|立替|相殺|業務料合計|取引銀行|振込|通勤手当|当座|銀行|みずほ|三菱|三井|りそな|北洋|千葉|口座名義/;
+  const excludeKeyword = /消費税|内税|外税|税込|税抜|立替|相殺|業務料合計|取引銀行|振込|通勤手当|当座|銀行|みずほ|三菱|三井|りそな|北洋|千葉|口座名義|登録番号|請求書No|お得意様|ページ|稼働年月|出勤日数|請求内訳|時間内時間外/;
 
   // 部署名行の判定（「課」「部」「室」「センター」で終わる短い行）
   const isDeptLine = (line) => {
@@ -569,13 +569,18 @@ function parsePdfText(text, masterData) {
             const val = cleanNums[cleanNums.length - 1];
             console.log("[BLOCK]", master.name, "+"+val, "(amountKw):", line.substring(0,50));
             blockAmount += val;
-          } else if (cleanNums.length === 1 && cleanNums[0] >= 500 && cleanNums[0] < 500000) {
+          } else if (cleanNums.length === 1 && cleanNums[0] >= 50000 && cleanNums[0] < 500000) {
+            // 単独数値行は5万円以上のみ（小額は書類番号・社員番号として除外）
             console.log("[BLOCK]", master.name, "+"+cleanNums[0], "(single):", line.substring(0,50));
             blockAmount += cleanNums[0];
           } else if (cleanNums.length >= 2) {
             const val = cleanNums[cleanNums.length - 1];
-            console.log("[BLOCK]", master.name, "+"+val, "(multi):", line.substring(0,50));
-            blockAmount += val;
+            if (val >= 10000) {
+              console.log("[BLOCK]", master.name, "+"+val, "(multi):", line.substring(0,50));
+              blockAmount += val;
+            } else {
+              console.log("[BLOCK SKIP]", master.name, "val<10000:", line.substring(0,50));
+            }
           }
         });
 
