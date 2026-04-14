@@ -566,18 +566,16 @@ function parsePdfText(text, masterData) {
           if (cleanNums.length === 0) return;
 
           if (amountLineKeyword.test(line)) {
-            // 明細キーワード行：最後の数値が金額
-            blockAmount += cleanNums[cleanNums.length - 1];
+            const val = cleanNums[cleanNums.length - 1];
+            console.log("[BLOCK]", master.name, "+"+val, "(amountKw):", line.substring(0,50));
+            blockAmount += val;
           } else if (cleanNums.length === 1 && cleanNums[0] >= 500 && cleanNums[0] < 500000) {
-            // 数値1つだけの行（交通費等）
+            console.log("[BLOCK]", master.name, "+"+cleanNums[0], "(single):", line.substring(0,50));
             blockAmount += cleanNums[0];
           } else if (cleanNums.length >= 2) {
-            // 複数数値の行（氏名行に金額が含まれるケース）
-            // エキスパート型: 「20014906 田中 明秀 20040006001820001 1:課税 2,250 160.00 時間 360,000」
-            // → 行末の数値（金額列）を採用。ただし小数除去後の最後の値
-            // スタッフ番号（8桁）・契約番号（16桁）は既にフィルタ済み（<=9999999）
-            // 残った数値の中で最後のものが金額
-            blockAmount += cleanNums[cleanNums.length - 1];
+            const val = cleanNums[cleanNums.length - 1];
+            console.log("[BLOCK]", master.name, "+"+val, "(multi):", line.substring(0,50));
+            blockAmount += val;
           }
         });
 
