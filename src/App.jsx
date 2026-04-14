@@ -488,7 +488,10 @@ function parsePdfText(text, masterData) {
   const isBillingDetailLine = (line) => /\d{2}\s*\/\s*\d{2}\s*\/\s*\d{2}/.test(line);
 
   // 勤怠一覧行の除外判定（曜日・出勤・休日などの勤怠キーワードを含む行）
-  const isAttendanceLine = (line) => /出勤|休日|有休|欠勤|曜日|開始|終了|休憩|実働/.test(line);
+  const isAttendanceLine = (line) => /出勤|休日|有休|欠勤|曜日|開始|終了|休憩|実働|勤怠|稼働年月|スタッフNo|JOB No/.test(line);
+
+  // 勤怠管理番号行の判定（「氏名 数字6桁 数字7桁」のパターン）
+  const isAttendanceIdLine = (line) => /[一-龥]{1,4}\s[一-龥]{1,4}\s+\d{6}\s+\d{7}/.test(line);
 
   // ブロック終端判定（合計・小計行）
   const isBlockEnd = (line) => {
@@ -513,6 +516,7 @@ function parsePdfText(text, masterData) {
         if (!normalizeSpaces(line).includes(master.norm)) return;
         if (isAttendanceLine(line)) return;
         if (isDeptLine(line)) return;
+        if (isAttendanceIdLine(line)) return;
         if (isBillingDetailLine(line) || amountLineKeyword.test(line)) {
           billingLines.push(idx);
         } else {
@@ -547,13 +551,13 @@ function parsePdfText(text, masterData) {
         let blockAmount = 0;
 
         blockLines.forEach(line => {
-          if (excludeKeyword.test(line) || isBlockEnd(line) || isAttendanceLine(line) || isDeptLine(line)) return;
+          if (excludeKeyword.test(line) || isBlockEnd(line) || isAttendanceLine(line) || isDeptLine(line) || isAttendanceIdLine(line)) return;
 
           // 小数・契約番号を除いた整数リスト
           const lineNoDecimal = line.replace(/\d+\.\d+/g, "");
           const cleanNums = (lineNoDecimal.match(/[\d,]{3,}/g) || [])
             .map(n => parseInt(n.replace(/,/g, ""), 10))
-            .filter(n => n >= 100 && n <= 9999999);
+            .filter(n => n >= 100 && n <= 999999); // 100万未満に制限（勤怠管理番号等を除外）
 
           if (cleanNums.length === 0) return;
 
