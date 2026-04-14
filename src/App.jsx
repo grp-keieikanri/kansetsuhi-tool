@@ -518,7 +518,9 @@ function parsePdfText(text, masterData) {
         if (isAttendanceLine(line)) return;
         if (isDeptLine(line)) return;
         if (isAttendanceIdLine(line)) return;
-        if (isBillingDetailLine(line) || amountLineKeyword.test(line)) {
+        // エキスパート型: スタッフ番号(5〜10桁)で始まる氏名行もbillingLinesに追加
+        const isExpertStaffLine = /^\d{5,10}\s+[一-龥]/.test(line);
+        if (isBillingDetailLine(line) || amountLineKeyword.test(line) || isExpertStaffLine) {
           billingLines.push(idx);
         } else {
           otherLines.push(idx);
