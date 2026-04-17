@@ -496,7 +496,7 @@ function parsePdfText(text, masterData) {
   const amountLineKeyword = /時間内|時間外残業|時間外|深夜|早朝|休日|通勤|交通費|交通|基本|普通残|割増|残業|深夜残|手当/;
 
   // 除外キーワード（合算しない行）
-  const excludeKeyword = /消費税|内税|外税|税込|税抜|立替|相殺|業務料合計|取引銀行|振込|通勤手当|当座|銀行|みずほ|三菱|三井|りそな|北洋|千葉|口座名義|登録番号|請求書No|お得意様|ページ|稼働年月|出勤日数|請求内訳|時間内時間外/;
+  const excludeKeyword = /消費税|内税|外税|税込|税抜|立替|相殺|業務料合計|取引銀行|振込|通勤手当|当座|銀行|みずほ|三菱|三井|りそな|北洋|千葉|口座名義|登録番号|請求書No|お得意様|ページ|稼働年月|出勤日数|請求内訳|時間内時間外|源泉徴収|源泉税/;
 
   // 部署名行の判定（「課」「部」「室」「センター」で終わる短い行）
   const isDeptLine = (line) => {
@@ -610,6 +610,22 @@ function parsePdfText(text, masterData) {
                 }
               }
             }
+          }
+        }
+        // 「源泉徴収」がある場合は小計+消費税を優先（源泉後合計を避ける）
+        const hasSoukei = blockLines.some(l => /源泉徴収|源泉税/.test(l));
+        if (hasSoukei) {
+          let shoukei = 0, zeikin = 0;
+          blockLines.forEach(l => {
+            const sm = l.match(/^小[\s　]*計[\s　]*([\d,]+)/);
+            if (sm) shoukei = parseInt(sm[1].replace(/,/g, ""), 10);
+            const tm = l.match(/消費税[^\n]*?(\d[\d,]*)$/);
+            if (tm && !/源泉/.test(l)) zeikin = parseInt(tm[1].replace(/,/g, ""), 10);
+          });
+          if (shoukei > 0) {
+            blockAmount = shoukei + zeikin;
+            totalAmount += blockAmount;
+            return;
           }
         }
         if (yenAmount >= 10000) {
