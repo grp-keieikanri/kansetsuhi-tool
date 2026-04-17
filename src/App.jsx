@@ -573,6 +573,22 @@ function parsePdfText(text, masterData) {
         const blockLines = rawLines.slice(startIdx, endIdx);
         let blockAmount = 0;
 
+        // まず¥マーク付き金額が含まれていればそれを優先採用（社内外注型）
+        let yenAmount = 0;
+        blockLines.forEach(line => {
+          if (excludeKeyword.test(line) || isBlockEnd(line)) return;
+          const yenMatch = line.match(/[¥￥]\s*([\d,，]+)/);
+          if (yenMatch) {
+            const amt = parseInt(yenMatch[1].replace(/[,，]/g, ""), 10);
+            if (amt >= 10000 && amt > yenAmount) yenAmount = amt;
+          }
+        });
+        if (yenAmount >= 10000) {
+          blockAmount = yenAmount;
+          totalAmount += blockAmount;
+          return; // ¥金額が取れたらこのブロックは完了
+        }
+
         blockLines.forEach(line => {
           if (excludeKeyword.test(line) || isBlockEnd(line) || isAttendanceLine(line) || isDeptLine(line) || isAttendanceIdLine(line)) return;
 
