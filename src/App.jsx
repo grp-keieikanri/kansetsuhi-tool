@@ -1,4 +1,4 @@
-// v3.0.0 - 2026-04-17
+// v2.0.1 - 2026-04-14
 import { useState, useCallback, useRef } from "react";
 import * as XLSX from "xlsx";
 
@@ -581,11 +581,12 @@ function parsePdfText(text, masterData) {
         const blockLines = rawLines.slice(startIdx, endIdx);
         let blockAmount = 0;
 
-        // 「源泉徴収」がある場合は最優先で小計+消費税を採用（源泉後合計を避ける）
-        const hasSoukei = blockLines.some(l => /源泉徴収|源泉税/.test(l));
-        if (hasSoukei) {
+        // PDF全体に「源泉徴収」がある場合はrawLines全体から小計+消費税を取得
+        const hasSoukeiInPdf = rawLines.some(l => /源泉徴収|源泉税/.test(l));
+        if (hasSoukeiInPdf) {
           let shoukei = 0, zeikin = 0;
-          blockLines.forEach(l => {
+          // startIdxより後の全行から小計と消費税を探す
+          rawLines.slice(startIdx).forEach(l => {
             const sm = l.match(/^小[\s　]*計[\s　]*([\d,]+)/);
             if (sm) shoukei = parseInt(sm[1].replace(/,/g, ""), 10);
             const tm = l.match(/消費税[^\n]*?(\d[\d,]*)$/);
