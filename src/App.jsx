@@ -517,8 +517,10 @@ function parsePdfText(text, masterData) {
   // ブロック終端判定（合計・小計行）
   const isBlockEnd = (line) => {
     const t = line.trim();
-    return /^合[\s　]*計/.test(t) || /^小[\s　]*計/.test(t) ||
-           /合[\s　]*計$/.test(t) || /小[\s　]*計$/.test(t);
+    // 「小計 消費税 請求金額」のような複合行は終端にしない（単独の合計・小計行のみ）
+    const isSimpleTotal = /^合[\s　]*計[\s　]*$/.test(t) || /^小[\s　]*計[\s　]*$/.test(t) ||
+           /^合[\s　]*計[\s　]*\d/.test(t) || /^小[\s　]*計[\s　]*\d/.test(t);
+    return isSimpleTotal;
   };
 
   // マスタ氏名を正規化
@@ -573,20 +575,47 @@ function parsePdfText(text, masterData) {
         const blockLines = rawLines.slice(startIdx, endIdx);
         let blockAmount = 0;
 
-        // まず¥マーク付き金額が含まれていればそれを優先採用（社内外注型）
+        // まず¥マーク・円マーク付き金額が含まれていればそれを優先採用（社内外注型）
         let yenAmount = 0;
         blockLines.forEach(line => {
           if (excludeKeyword.test(line) || isBlockEnd(line)) return;
+          // ¥マーク付き金額
           const yenMatch = line.match(/[¥￥]\s*([\d,，]+)/);
           if (yenMatch) {
             const amt = parseInt(yenMatch[1].replace(/[,，]/g, ""), 10);
             if (amt >= 10000 && amt > yenAmount) yenAmount = amt;
           }
+          // 「円」マーク付き金額（末尾に「円」がある数値）
+          const enMatches = line.matchAll(/(\d[\d,，]*)\s*円/g);
+          for (const m of enMatches) {
+            const amt = parseInt(m[1].replace(/[,，]/g, ""), 10);
+            if (amt >= 10000 && amt > yenAmount) yenAmount = amt;
+          }
         });
+        // 「請求金額」キーワード直後の金額もチェック
+        if (yenAmount < 10000) {
+          const requestKwLocal = /請求金額|合計金額|ご請求金額|税込合計/;
+          for (let bi = 0; bi < blockLines.length; bi++) {
+            if (requestKwLocal.test(blockLines[bi])) {
+              for (let bj = bi; bj <= Math.min(bi + 3, blockLines.length - 1); bj++) {
+                const yenM = blockLines[bj].match(/[¥￥]\s*([\d,，]+)/);
+                if (yenM) {
+                  const amt = parseInt(yenM[1].replace(/[,，]/g, ""), 10);
+                  if (amt >= 10000) { yenAmount = amt; break; }
+                }
+                const enM = blockLines[bj].match(/(\d[\d,，]*)\s*円/);
+                if (enM) {
+                  const amt = parseInt(enM[1].replace(/[,，]/g, ""), 10);
+                  if (amt >= 10000 && amt > yenAmount) yenAmount = amt;
+                }
+              }
+            }
+          }
+        }
         if (yenAmount >= 10000) {
           blockAmount = yenAmount;
           totalAmount += blockAmount;
-          return; // ¥金額が取れたらこのブロックは完了
+          return; // ¥/円金額が取れたらこのブロックは完了
         }
 
         blockLines.forEach(line => {
