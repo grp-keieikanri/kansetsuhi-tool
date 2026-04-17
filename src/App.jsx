@@ -536,7 +536,13 @@ function parsePdfText(text, masterData) {
       const otherLines  = []; // その他の行
 
       rawLines.forEach((line, idx) => {
-        if (!normalizeSpaces(line).includes(master.norm)) return;
+        const normLine = normalizeSpaces(line);
+        // 完全一致 または 漢字姓部分（先頭2文字）での部分一致
+        const kanjiPart = master.norm.replace(/[A-Za-zＡ-Ｚａ-ｚ\u30A0-\u30FF\u3040-\u309F]/g, "");
+        const lastName = kanjiPart.substring(0, 2);
+        const matchesFull = normLine.includes(master.norm);
+        const matchesLast = lastName.length >= 2 && normLine.includes(lastName);
+        if (!matchesFull && !matchesLast) return;
         if (isAttendanceLine(line)) return;
         if (isDeptLine(line)) return;
         if (isAttendanceIdLine(line)) return;
@@ -575,24 +581,38 @@ function parsePdfText(text, masterData) {
         const blockLines = rawLines.slice(startIdx, endIdx);
         let blockAmount = 0;
 
-        // まず¥マーク・円マーク付き金額が含まれていればそれを優先採用（社内外注型）
+        // 「源泉徴収」がある場合は最優先で小計+消費税を採用（源泉後合計を避ける）
+        const hasSoukei = blockLines.some(l => /源泉徴収|源泉税/.test(l));
+        if (hasSoukei) {
+          let shoukei = 0, zeikin = 0;
+          blockLines.forEach(l => {
+            const sm = l.match(/^小[\s　]*計[\s　]*([\d,]+)/);
+            if (sm) shoukei = parseInt(sm[1].replace(/,/g, ""), 10);
+            const tm = l.match(/消費税[^\n]*?(\d[\d,]*)$/);
+            if (tm && !/源泉/.test(l)) zeikin = parseInt(tm[1].replace(/,/g, ""), 10);
+          });
+          if (shoukei > 0) {
+            blockAmount = shoukei + zeikin;
+            totalAmount += blockAmount;
+            return;
+          }
+        }
+
+        // ¥マーク・円マーク付き金額を優先採用（社内外注型）
         let yenAmount = 0;
         blockLines.forEach(line => {
           if (excludeKeyword.test(line) || isBlockEnd(line)) return;
-          // ¥マーク付き金額
           const yenMatch = line.match(/[¥￥]\s*([\d,，]+)/);
           if (yenMatch) {
             const amt = parseInt(yenMatch[1].replace(/[,，]/g, ""), 10);
             if (amt >= 10000 && amt > yenAmount) yenAmount = amt;
           }
-          // 「円」マーク付き金額（末尾に「円」がある数値）
           const enMatches = line.matchAll(/(\d[\d,，]*)\s*円/g);
           for (const m of enMatches) {
             const amt = parseInt(m[1].replace(/[,，]/g, ""), 10);
             if (amt >= 10000 && amt > yenAmount) yenAmount = amt;
           }
         });
-        // 「請求金額」キーワード直後の金額もチェック
         if (yenAmount < 10000) {
           const requestKwLocal = /請求金額|合計金額|ご請求金額|税込合計/;
           for (let bi = 0; bi < blockLines.length; bi++) {
@@ -612,26 +632,10 @@ function parsePdfText(text, masterData) {
             }
           }
         }
-        // 「源泉徴収」がある場合は小計+消費税を優先（源泉後合計を避ける）
-        const hasSoukei = blockLines.some(l => /源泉徴収|源泉税/.test(l));
-        if (hasSoukei) {
-          let shoukei = 0, zeikin = 0;
-          blockLines.forEach(l => {
-            const sm = l.match(/^小[\s　]*計[\s　]*([\d,]+)/);
-            if (sm) shoukei = parseInt(sm[1].replace(/,/g, ""), 10);
-            const tm = l.match(/消費税[^\n]*?(\d[\d,]*)$/);
-            if (tm && !/源泉/.test(l)) zeikin = parseInt(tm[1].replace(/,/g, ""), 10);
-          });
-          if (shoukei > 0) {
-            blockAmount = shoukei + zeikin;
-            totalAmount += blockAmount;
-            return;
-          }
-        }
         if (yenAmount >= 10000) {
           blockAmount = yenAmount;
           totalAmount += blockAmount;
-          return; // ¥/円金額が取れたらこのブロックは完了
+          return;
         }
 
         blockLines.forEach(line => {
