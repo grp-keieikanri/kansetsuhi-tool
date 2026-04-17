@@ -1,4 +1,4 @@
-// v2.0.1 - 2026-04-14
+// v3.0.0 - 2026-04-17
 import { useState, useCallback, useRef } from "react";
 import * as XLSX from "xlsx";
 
