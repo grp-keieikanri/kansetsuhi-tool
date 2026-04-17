@@ -39,7 +39,27 @@ function calcEmployee(emp) {
 function fmt(n) { return Math.round(n).toLocaleString("ja-JP"); }
 
 function normalizeSpaces(str) {
-  return (str || "").replace(/[\s\u3000\u00a0]/g, "").normalize("NFKC");
+  // スペース除去 + NFKC正規化 + 旧字体→新字体変換
+  const kanjiMap = {
+    '郞': '郎', // 郞→郎
+    '圓': '円', // 圓→円
+    '濵': '浜', // 濱→浜
+    '澤': '沢', // 澤→沢
+    '齋': '斎', // 齋→斎
+    '齊': '斉', // 齊→斉
+    '廣': '広', // 廣→広
+    '德': '徳', // 德→徳
+    '國': '国', // 國→国
+    '會': '会', // 會→会
+    '實': '実', // 實→実
+    '關': '関', // 關→関
+    '變': '変', // 變→変
+  };
+  let s = (str || "").replace(/[\s\u3000\u00a0]/g, "").normalize("NFKC");
+  for (const [old, nw] of Object.entries(kanjiMap)) {
+    s = s.split(old).join(nw);
+  }
+  return s;
 }
 
 // ============================================================
