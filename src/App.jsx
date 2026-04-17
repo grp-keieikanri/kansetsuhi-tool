@@ -806,7 +806,18 @@ function parsePdfText(text, masterData) {
     if (foundAmount > 0) results.push({ name: "", amount: foundAmount, matched: false, master: null });
   }
 
-  return results;
+  // 同一人物（氏名一致）の金額を合算して1件にまとめる
+  const mergedResults = [];
+  results.forEach(r => {
+    const existing = mergedResults.find(m => m.name === r.name && m.matched === r.matched);
+    if (existing) {
+      existing.amount += r.amount;
+    } else {
+      mergedResults.push({ ...r });
+    }
+  });
+
+  return mergedResults;
 }
 // ============================================================
 // TAB: インポート準備
