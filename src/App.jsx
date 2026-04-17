@@ -537,12 +537,8 @@ function parsePdfText(text, masterData) {
 
       rawLines.forEach((line, idx) => {
         const normLine = normalizeSpaces(line);
-        // 完全一致 または 漢字姓部分（先頭2文字）での部分一致
-        const kanjiPart = master.norm.replace(/[A-Za-zＡ-Ｚａ-ｚ\u30A0-\u30FF\u3040-\u309F]/g, "");
-        const lastName = kanjiPart.substring(0, 2);
-        const matchesFull = normLine.includes(master.norm);
-        const matchesLast = lastName.length >= 2 && normLine.includes(lastName);
-        if (!matchesFull && !matchesLast) return;
+        // 完全一致のみ（部分マッチは誤マッチの原因になるため使用しない）
+        if (!normLine.includes(master.norm)) return;
         if (isAttendanceLine(line)) return;
         if (isDeptLine(line)) return;
         if (isAttendanceIdLine(line)) return;
@@ -581,8 +577,9 @@ function parsePdfText(text, masterData) {
         const blockLines = rawLines.slice(startIdx, endIdx);
         let blockAmount = 0;
 
-        // PDF全体に「源泉徴収」がある場合はrawLines全体から小計+消費税を取得
-        const hasSoukeiInPdf = rawLines.some(l => /源泉徴収|源泉税/.test(l));
+        // PDF全体に「源泉徴収税額」がある場合はrawLines全体から小計+消費税を取得
+        // 「源泉税率」などは除外（スタッフサービスの支払依頼書に含まれるため）
+        const hasSoukeiInPdf = rawLines.some(l => /源泉徴収税額/.test(l));
         if (hasSoukeiInPdf) {
           let shoukei = 0, zeikin = 0;
           // startIdxより後の全行から小計と消費税を探す
