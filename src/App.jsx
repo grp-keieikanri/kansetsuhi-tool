@@ -725,12 +725,14 @@ function parsePdfText(text, masterData) {
 
   // フォールバック: マスタ未登録時、氏名パターンで検索
   if (results.length === 0) {
-    const namePattern = /[\u4e00-\u9fa5]{1,4}[\s\u3000\u3000][\u4e00-\u9fa5]{1,4}/g;
+    const namePattern = /[\u4e00-\u9fa5]{1,4}[\s\u3000][\u4e00-\u9fa5]{1,4}/g;
+    // 氏名として不適切な一般語を除外
+    const invalidNameWords = /合計|請求|消費|内訳|小計|明細|御中|様|会社|株式|品目|単価|数量|価格|納品|原稿|整理|作成|備考|チェック|件数|振込|支払|登録|番号|氏名|住所|銀行|口座|支店|期日|摘要|金額|基本|超過|不足|交通|出張|経費|課税|消費|対象|内訳|手当|通信|業務|インフラ|提供|受注|機種|代表|事業|部門|担当|締め|翌月|登録番号|請求書|年月日|件名|補足|その他/;
     const foundNames = new Set();
     rawLines.forEach((line, startIdx) => {
       (line.match(namePattern) || []).forEach(rawName => {
         const name = rawName.trim();
-        if (foundNames.has(name) || /合計|請求|消費|内訳|小計|明細|御中|様|会社|株式/.test(name)) return;
+        if (foundNames.has(name) || invalidNameWords.test(name)) return;
         foundNames.add(name);
         let endIdx = Math.min(rawLines.length, startIdx + 20);
         for (let i = startIdx + 1; i < endIdx; i++) {
@@ -874,6 +876,22 @@ function ImportPrepTab() {
         const master = item.master;
         const norm = normalizeSpaces(extractedName);
         const match = master || masterData.find(m => normalizeSpaces(m.name) === norm);
+        
+        // 同一氏名がすでにnewRowsにある場合は金額を合算（複数PDF対応）
+        const existingRow = match ? newRows.find(r => normalizeSpaces(r.name) === norm && r.matched) : null;
+        if (existingRow) {
+          const addAmount = amount;
+          if (match?.employmentType === "社内外注") {
+            existingRow.criteriaValue = Math.round((existingRow.amount + addAmount) / 1.1);
+          } else if (match?.employmentType === "派遣社員") {
+            existingRow.criteriaValue = existingRow.taxType === "taxIncluded"
+              ? existingRow.amount + addAmount
+              : Math.round((existingRow.amount + addAmount) * 1.1);
+          }
+          existingRow.amount += addAmount;
+          existingRow.fileName += ", " + file.name;
+          return; // 新しい行は追加しない
+        }
         // 社内外注: PDF金額は税込 → 税抜（÷1.1）を判定基準値に
         // 派遣社員: PDF金額は税抜 → 税込（×1.1）を判定基準値に
         // その他: そのまま
