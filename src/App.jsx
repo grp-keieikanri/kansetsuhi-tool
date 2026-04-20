@@ -558,8 +558,8 @@ function parsePdfText(text, masterData) {
       let totalAmount = 0;
 
       targetLines.forEach(startIdx => {
-        // ブロック終端を決定（最大8行）
-        let endIdx = Math.min(rawLines.length, startIdx + 8);
+        // ブロック終端を決定（最大15行）
+        let endIdx = Math.min(rawLines.length, startIdx + 15);
         for (let i = startIdx + 1; i < endIdx; i++) {
           const l = rawLines[i];
           const normL = normalizeSpaces(l);
@@ -603,12 +603,12 @@ function parsePdfText(text, masterData) {
           const yenMatch = line.match(/[¥￥]\s*([\d,，]+)/);
           if (yenMatch) {
             const amt = parseInt(yenMatch[1].replace(/[,，]/g, ""), 10);
-            if (amt >= 10000 && amt > yenAmount) yenAmount = amt;
+            if (amt >= 1000 && amt > yenAmount) yenAmount = amt;
           }
           const enMatches = line.matchAll(/(\d[\d,，]*)\s*円/g);
           for (const m of enMatches) {
             const amt = parseInt(m[1].replace(/[,，]/g, ""), 10);
-            if (amt >= 10000 && amt > yenAmount) yenAmount = amt;
+            if (amt >= 1000 && amt > yenAmount) yenAmount = amt;
           }
         });
         if (yenAmount < 10000) {
@@ -619,18 +619,18 @@ function parsePdfText(text, masterData) {
                 const yenM = blockLines[bj].match(/[¥￥]\s*([\d,，]+)/);
                 if (yenM) {
                   const amt = parseInt(yenM[1].replace(/[,，]/g, ""), 10);
-                  if (amt >= 10000) { yenAmount = amt; break; }
+                  if (amt >= 1000) { yenAmount = amt; break; }
                 }
                 const enM = blockLines[bj].match(/(\d[\d,，]*)\s*円/);
                 if (enM) {
                   const amt = parseInt(enM[1].replace(/[,，]/g, ""), 10);
-                  if (amt >= 10000 && amt > yenAmount) yenAmount = amt;
+                  if (amt >= 1000 && amt > yenAmount) yenAmount = amt;
                 }
               }
             }
           }
         }
-        if (yenAmount >= 10000) {
+        if (yenAmount >= 1000) {
           blockAmount = yenAmount;
           totalAmount += blockAmount;
           return;
@@ -655,7 +655,7 @@ function parsePdfText(text, masterData) {
             blockAmount += cleanNums[0];
           } else if (cleanNums.length >= 2) {
             const val = cleanNums[cleanNums.length - 1];
-            if (val >= 10000) {
+            if (val >= 1000) {
               blockAmount += val;
             } else {
             }
@@ -673,28 +673,28 @@ function parsePdfText(text, masterData) {
           const line = rawLines[i];
           if (/^[￥¥$]\s*$/.test(line.trim())) {
             for (let j = i + 1; j <= Math.min(i + 2, rawLines.length - 1); j++) {
-              const nums = extractNums(rawLines[j]).filter(n => n >= 10000);
+              const nums = extractNums(rawLines[j]).filter(n => n >= 1000);
               if (nums.length > 0) { totalAmount = Math.max(totalAmount, ...nums); break; }
             }
           }
           const yenMatch = line.match(/[￥¥$]\s*([\d,，]+)/);
           if (yenMatch) {
             const amt = parseInt(yenMatch[1].replace(/[,，]/g, ""), 10);
-            if (amt >= 10000 && amt > totalAmount) totalAmount = amt;
+            if (amt >= 1000 && amt > totalAmount) totalAmount = amt;
           }
         }
         if (totalAmount < 10000) {
           for (let i = 0; i < rawLines.length; i++) {
             if (requestKw.test(rawLines[i])) {
               for (let j = i; j <= Math.min(i + 5, rawLines.length - 1); j++) {
-                const nums = extractNums(rawLines[j]).filter(n => n >= 10000);
+                const nums = extractNums(rawLines[j]).filter(n => n >= 1000);
                 if (nums.length > 0) { totalAmount = Math.max(totalAmount, ...nums); break; }
               }
             }
           }
         }
       }
-      if (totalAmount >= 10000) {
+      if (totalAmount >= 1000) {
         results.push({ name: master.name, amount: totalAmount, matched: true, master });
       }
     });
@@ -710,21 +710,21 @@ function parsePdfText(text, masterData) {
       const line = rawLines[i];
       if (/^[￥¥$]\s*$/.test(line.trim())) {
         for (let j = i + 1; j <= Math.min(i + 2, rawLines.length - 1); j++) {
-          const nums = extractNums(rawLines[j]).filter(n => n >= 10000);
+          const nums = extractNums(rawLines[j]).filter(n => n >= 1000);
           if (nums.length > 0) { fallbackAmount = Math.max(fallbackAmount, ...nums); break; }
         }
       }
       const yenMatch = line.match(/[￥¥$]\s*([\d,，]+)/);
       if (yenMatch) {
         const amt = parseInt(yenMatch[1].replace(/[,，]/g, ""), 10);
-        if (amt >= 10000 && amt > fallbackAmount) fallbackAmount = amt;
+        if (amt >= 1000 && amt > fallbackAmount) fallbackAmount = amt;
       }
     }
     if (fallbackAmount === 0) {
       for (let i = 0; i < rawLines.length; i++) {
         if (requestKeyword2.test(rawLines[i])) {
           for (let j = i; j <= Math.min(i + 5, rawLines.length - 1); j++) {
-            const nums = extractNums(rawLines[j]).filter(n => n >= 10000);
+            const nums = extractNums(rawLines[j]).filter(n => n >= 1000);
             if (nums.length > 0) { fallbackAmount = Math.max(fallbackAmount, ...nums); break; }
           }
         }
@@ -783,7 +783,7 @@ function parsePdfText(text, masterData) {
       // 「￥」単体行の次の行が金額
       if (/^[￥¥$]\s*$/.test(line.trim())) {
         for (let j = i + 1; j <= Math.min(i + 2, rawLines.length - 1); j++) {
-          const nums = extractNums(rawLines[j]).filter(n => n >= 10000);
+          const nums = extractNums(rawLines[j]).filter(n => n >= 1000);
           if (nums.length > 0) {
             foundAmount = Math.max(foundAmount, ...nums);
             break;
@@ -794,7 +794,7 @@ function parsePdfText(text, masterData) {
       const yenMatch = line.match(/[￥¥$]\s*([\d,，]+)/);
       if (yenMatch) {
         const amt = parseInt(yenMatch[1].replace(/[,，]/g, ""), 10);
-        if (amt >= 10000 && amt > foundAmount) foundAmount = amt;
+        if (amt >= 1000 && amt > foundAmount) foundAmount = amt;
       }
     }
 
@@ -803,7 +803,7 @@ function parsePdfText(text, masterData) {
       for (let i = 0; i < rawLines.length; i++) {
         if (requestKeyword.test(rawLines[i])) {
           for (let j = i; j <= Math.min(i + 5, rawLines.length - 1); j++) {
-            const nums = extractNums(rawLines[j]).filter(n => n >= 10000);
+            const nums = extractNums(rawLines[j]).filter(n => n >= 1000);
             if (nums.length > 0) {
               foundAmount = Math.max(foundAmount, ...nums);
               break;
