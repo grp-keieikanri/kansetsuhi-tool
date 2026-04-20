@@ -597,18 +597,21 @@ function parsePdfText(text, masterData) {
         }
 
         // ¥マーク・円マーク付き金額を優先採用（社内外注型）
+        // 社内外注は小額案件があるため1000円以上、派遣は10000円以上
+        const isShaInGaichuu = master?.employmentType === "社内外注";
+        const yenMinAmt = isShaInGaichuu ? 1000 : 10000;
         let yenAmount = 0;
         blockLines.forEach(line => {
           if (excludeKeyword.test(line) || isBlockEnd(line)) return;
           const yenMatch = line.match(/[¥￥]\s*([\d,，]+)/);
           if (yenMatch) {
             const amt = parseInt(yenMatch[1].replace(/[,，]/g, ""), 10);
-            if (amt >= 1000 && amt > yenAmount) yenAmount = amt;
+            if (amt >= yenMinAmt && amt > yenAmount) yenAmount = amt;
           }
           const enMatches = line.matchAll(/(\d[\d,，]*)\s*円/g);
           for (const m of enMatches) {
             const amt = parseInt(m[1].replace(/[,，]/g, ""), 10);
-            if (amt >= 1000 && amt > yenAmount) yenAmount = amt;
+            if (amt >= yenMinAmt && amt > yenAmount) yenAmount = amt;
           }
         });
         if (yenAmount < 10000) {
@@ -619,18 +622,18 @@ function parsePdfText(text, masterData) {
                 const yenM = blockLines[bj].match(/[¥￥]\s*([\d,，]+)/);
                 if (yenM) {
                   const amt = parseInt(yenM[1].replace(/[,，]/g, ""), 10);
-                  if (amt >= 1000) { yenAmount = amt; break; }
+                  if (amt >= yenMinAmt) { yenAmount = amt; break; }
                 }
                 const enM = blockLines[bj].match(/(\d[\d,，]*)\s*円/);
                 if (enM) {
                   const amt = parseInt(enM[1].replace(/[,，]/g, ""), 10);
-                  if (amt >= 1000 && amt > yenAmount) yenAmount = amt;
+                  if (amt >= yenMinAmt && amt > yenAmount) yenAmount = amt;
                 }
               }
             }
           }
         }
-        if (yenAmount >= 1000) {
+        if (yenAmount >= yenMinAmt) {
           blockAmount = yenAmount;
           totalAmount += blockAmount;
           return;
@@ -694,7 +697,7 @@ function parsePdfText(text, masterData) {
           }
         }
       }
-      if (totalAmount >= 1000) {
+      if (totalAmount >= (master?.employmentType === "社内外注" ? 1000 : 10000)) {
         results.push({ name: master.name, amount: totalAmount, matched: true, master });
       }
     });
