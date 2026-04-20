@@ -658,9 +658,8 @@ function parsePdfText(text, masterData) {
             blockAmount += cleanNums[0];
           } else if (cleanNums.length >= 2) {
             const val = cleanNums[cleanNums.length - 1];
-            if (val >= 1000) {
+            if (val >= yenMinAmt) {
               blockAmount += val;
-            } else {
             }
           }
         });
@@ -669,28 +668,29 @@ function parsePdfText(text, masterData) {
       });
 
       // 金額が取れなかった場合は「今回ご請求額」フォールバックを使用（リクルート型対応）
-      if (totalAmount < 10000) {
+      const minAmt = master?.employmentType === "社内外注" ? 1000 : 10000;
+      if (totalAmount < minAmt) {
         // ￥マーク直後または今回ご請求額キーワード直後の金額を探す
         const requestKw = /今回.*請求額|今回.*ご請求|御請求額|ご請求額/;
         for (let i = 0; i < rawLines.length; i++) {
           const line = rawLines[i];
           if (/^[￥¥$]\s*$/.test(line.trim())) {
             for (let j = i + 1; j <= Math.min(i + 2, rawLines.length - 1); j++) {
-              const nums = extractNums(rawLines[j]).filter(n => n >= 1000);
+              const nums = extractNums(rawLines[j]).filter(n => n >= minAmt);
               if (nums.length > 0) { totalAmount = Math.max(totalAmount, ...nums); break; }
             }
           }
           const yenMatch = line.match(/[￥¥$]\s*([\d,，]+)/);
           if (yenMatch) {
             const amt = parseInt(yenMatch[1].replace(/[,，]/g, ""), 10);
-            if (amt >= 1000 && amt > totalAmount) totalAmount = amt;
+            if (amt >= minAmt && amt > totalAmount) totalAmount = amt;
           }
         }
-        if (totalAmount < 10000) {
+        if (totalAmount < minAmt) {
           for (let i = 0; i < rawLines.length; i++) {
             if (requestKw.test(rawLines[i])) {
               for (let j = i; j <= Math.min(i + 5, rawLines.length - 1); j++) {
-                const nums = extractNums(rawLines[j]).filter(n => n >= 1000);
+                const nums = extractNums(rawLines[j]).filter(n => n >= minAmt);
                 if (nums.length > 0) { totalAmount = Math.max(totalAmount, ...nums); break; }
               }
             }
